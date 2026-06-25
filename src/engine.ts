@@ -230,7 +230,7 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
     const { rawScores, docMatchTypes, docMatchedTokens } = this._lookupAndScore(
       queryTokens, targetFields, maxFuzzyDist, N
     );
-    this._applyExactBoost(rawScores, queryTokens, targetFields, q, boostExact);
+    this._applyExactBoost(rawScores, queryTokens, targetFields, boostExact);
     const normScores = this._normaliseScores(rawScores);
     const { paginated, total } = this._filterAndSortCandidates(
       normScores, rawScores, filter, minScore, limit, offset
@@ -353,17 +353,16 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
     rawScores: Map<string, number>,
     queryTokens: string[],
     targetFields: string[],
-    q: string,
     boostExact: boolean
   ): void {
     if (!boostExact || queryTokens.length <= 1) return;
 
     const exactIds = new Set<string>();
-    for (const [docId, meta] of this.docs.getAll().map((m) => [m.id, m] as const)) {
+    for (const docId of rawScores.keys()) {
       for (const field of targetFields) {
-        const val = getFieldValue(meta.doc, field, this.fields[field]?.path).toLowerCase();
-        if (val.includes(q.toLowerCase())) {
+        if (this.index.hasExactPhrase(field, queryTokens, docId)) {
           exactIds.add(docId);
+          break;
         }
       }
     }

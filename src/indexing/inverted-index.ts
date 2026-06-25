@@ -178,6 +178,46 @@ export class InvertedIndexStore {
     return results;
   }
 
+  /**
+   * Check whether the given terms appear as consecutive positions
+   * for a document in a field (exact phrase match).
+   */
+  hasExactPhrase(field: string, terms: string[], docId: string): boolean {
+    if (terms.length === 0) return false;
+
+    const fieldIndex = this.indexes.get(field);
+    if (!fieldIndex) return false;
+
+    const firstPostings = fieldIndex.get(terms[0]);
+    if (!firstPostings) return false;
+    const firstPositions = firstPostings.get(docId);
+    if (!firstPositions || firstPositions.length === 0) return false;
+
+    // Build position sets for all subsequent terms
+    const termPosSets: Set<number>[] = [];
+    for (let i = 1; i < terms.length; i++) {
+      const postings = fieldIndex.get(terms[i]);
+      if (!postings) return false;
+      const positions = postings.get(docId);
+      if (!positions || positions.length === 0) return false;
+      termPosSets.push(new Set(positions));
+    }
+
+    // Check if any first-term position has a consecutive run through all terms
+    for (const startPos of firstPositions) {
+      let allMatch = true;
+      for (let i = 0; i < termPosSets.length; i++) {
+        if (!termPosSets[i].has(startPos + i + 1)) {
+          allMatch = false;
+          break;
+        }
+      }
+      if (allMatch) return true;
+    }
+
+    return false;
+  }
+
   get fields(): string[] {
     return [...this.indexes.keys()];
   }
