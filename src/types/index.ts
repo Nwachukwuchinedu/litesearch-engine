@@ -40,9 +40,9 @@ export interface LiteSearchConfig<T extends AnyDocument = AnyDocument> {
    * @example
    * fields: {
    *   name:        { weight: 3, suggest: true },
-   *   description: { weight: 1, fuzzy: true },
+   *   description: { weight: 1 },
    *   category:    { weight: 2, suggest: true },
-   *   tags:        { weight: 1.5, suggest: false },
+   *   tags:        { weight: 1.5 },
    * }
    */
   fields: (keyof T & string)[] | Record<keyof T & string, FieldConfig>;
