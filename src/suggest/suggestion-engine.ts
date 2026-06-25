@@ -2,12 +2,36 @@
 // LiteSearch — Suggestion Engine (Autocomplete)
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { Trie } from "../core/trie.js";
 import { levenshtein, adaptiveMaxDistance } from "../core/levenshtein.js";
 import type { SuggestResult, SuggestionHit } from "../types/index.js";
 
+// ── Internal trie types (not exported) ──────────────────────────────────────
+
+interface TrieNode {
+  children: Map<string, TrieNode>;
+  docIds: Set<string>;
+  frequency: number;
+  isWord: boolean;
+}
+
+function createNode(): TrieNode {
+  return {
+    children: new Map(),
+    docIds: new Set(),
+    frequency: 0,
+    isWord: false,
+  };
+}
+
+interface TrieMatch {
+  word: string;
+  docIds: string[];
+  frequency: number;
+}
+
 export class SuggestionEngine {
-  private trie: Trie = new Trie();
+  private root: TrieNode = createNode();
+  private _nodeCount = 0;
   private maxResults: number;
 
   constructor(maxResults = 10) {
@@ -18,14 +42,34 @@ export class SuggestionEngine {
    * Index a word for a given document.
    */
   insert(word: string, docId: string): void {
-    this.trie.insert(word, docId);
+    let node = this.root;
+
+    for (const char of word) {
+      if (!node.children.has(char)) {
+        node.children.set(char, createNode());
+        this._nodeCount++;
+      }
+      node = node.children.get(char)!;
+      node.docIds.add(docId);
+    }
+
+    node.isWord = true;
+    node.frequency++;
+    node.docIds.add(docId);
   }
 
   /**
    * Remove all suggestions associated with a document.
    */
   removeDoc(docId: string): void {
-    this.trie.removeDoc(docId);
+    this._removeDocFromNode(this.root, docId);
+  }
+
+  private _removeDocFromNode(node: TrieNode, docId: string): void {
+    node.docIds.delete(docId);
+    for (const child of node.children.values()) {
+      this._removeDocFromNode(child, docId);
+    }
   }
 
   /**
@@ -46,7 +90,7 @@ export class SuggestionEngine {
     const seen = new Set<string>();
 
     // ── 1. Prefix matches via Trie ──────────────────────────────────────────
-    const prefixMatches = this.trie.prefixSearch(q, this.maxResults * 2);
+    const prefixMatches = this._prefixSearch(q, this.maxResults * 2);
 
     for (const match of prefixMatches) {
       if (seen.has(match.word)) continue;
@@ -65,7 +109,7 @@ export class SuggestionEngine {
     if (hits.length < 3 && q.length >= 4) {
       const adaptive = adaptiveMaxDistance(q, maxFuzzyDistance);
       if (adaptive > 0) {
-        const allWords = this.trie.allWords();
+        const allWords = this._allWords();
 
         for (const match of allWords) {
           if (seen.has(match.word)) continue;
@@ -104,10 +148,54 @@ export class SuggestionEngine {
   }
 
   get nodeCount(): number {
-    return this.trie.nodeCount;
+    return this._nodeCount;
   }
 
   clear(): void {
-    this.trie.clear();
+    this.root = createNode();
+    this._nodeCount = 0;
+  }
+
+  // ── Private trie helpers ──────────────────────────────────────────────────
+
+  private _prefixSearch(prefix: string, maxResults: number): TrieMatch[] {
+    let node = this.root;
+
+    for (const char of prefix) {
+      if (!node.children.has(char)) return [];
+      node = node.children.get(char)!;
+    }
+
+    const results: TrieMatch[] = [];
+    this._collectWords(node, prefix, results, maxResults);
+
+    return results.sort((a, b) => b.frequency - a.frequency).slice(0, maxResults);
+  }
+
+  private _collectWords(
+    node: TrieNode,
+    current: string,
+    results: TrieMatch[],
+    maxResults: number
+  ): void {
+    if (results.length >= maxResults * 3) return;
+
+    if (node.isWord && node.docIds.size > 0) {
+      results.push({
+        word: current,
+        docIds: [...node.docIds],
+        frequency: node.frequency,
+      });
+    }
+
+    for (const [char, child] of node.children) {
+      this._collectWords(child, current + char, results, maxResults);
+    }
+  }
+
+  private _allWords(): TrieMatch[] {
+    const results: TrieMatch[] = [];
+    this._collectWords(this.root, "", results, Infinity as unknown as number);
+    return results;
   }
 }
