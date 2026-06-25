@@ -116,6 +116,7 @@ describe("LiteSearch (integration)", () => {
       const result = engine.search("");
       expect(result.hits).toEqual([]);
       expect(result.total).toBe(0);
+      expect(result.took).toBe(0);
     });
 
     it("field-specific search works", () => {
