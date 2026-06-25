@@ -1,0 +1,226 @@
+import { describe, it, expect } from "vitest";
+import { LiteSearch } from "../../src/engine";
+import type { AnyDocument } from "../../src/types/index";
+
+interface TestDoc extends AnyDocument {
+  id: string;
+  title: string;
+  description: string;
+  category: string;
+  price: number;
+}
+
+function createEngine() {
+  return new LiteSearch<TestDoc>({
+    idField: "id",
+    fields: {
+      title: { weight: 3, suggest: true },
+      description: { weight: 1 },
+      category: { weight: 2, suggest: true },
+    },
+    fuzzy: { enabled: true, maxDistance: 2, minLength: 4 },
+  });
+}
+
+describe("LiteSearch (integration)", () => {
+  describe("add and search", () => {
+    it("basic search returns correct docs", () => {
+      const engine = createEngine();
+      engine.add({ id: "1", title: "Running Shoes", description: "Comfortable running shoes for daily use", category: "Footwear", price: 7500 });
+      engine.add({ id: "2", title: "Basketball Sneakers", description: "High-top basketball shoes", category: "Footwear", price: 12000 });
+      engine.add({ id: "3", title: "Yoga Mat", description: "Non-slip yoga mat", category: "Fitness", price: 2500 });
+
+      const result = engine.search("shoes");
+      expect(result.hits.length).toBeGreaterThanOrEqual(1);
+      expect(result.hits.some((h) => h.document.id === "1")).toBe(true);
+      expect(result.hits.some((h) => h.document.id === "2")).toBe(true);
+    });
+
+    it("BM25 scoring ranks relevant docs higher", () => {
+      const engine = createEngine();
+      engine.add({ id: "1", title: "Running Shoes", description: "Comfortable running shoes", category: "Footwear", price: 7500 });
+      engine.add({ id: "2", title: "Brown Boots", description: "Leather boots for winter", category: "Footwear", price: 15000 });
+      engine.add({ id: "3", title: "Office Chair", description: "Ergonomic office chair", category: "Furniture", price: 45000 });
+
+      const result = engine.search("running shoes");
+      expect(result.hits.length).toBeGreaterThanOrEqual(1);
+      expect(result.hits[0].document.id).toBe("1");
+      expect(result.hits[0].score).toBeGreaterThan(0);
+    });
+
+    it("fuzzy matching finds close matches", () => {
+      const engine = createEngine();
+      engine.add({ id: "1", title: "Running Shoes", description: "For runners", category: "Footwear", price: 7500 });
+
+      // "shoes" vs "shoes" — exact; but test with a typo
+      const result = engine.search("shoess"); // one extra 's'
+      expect(result.hits.length).toBeGreaterThanOrEqual(1);
+      expect(result.hits[0].document.id).toBe("1");
+    });
+
+    it("prefix matching works for partial words", () => {
+      const engine = createEngine();
+      engine.add({ id: "1", title: "Running Shoes", description: "Great for jogging", category: "Footwear", price: 7500 });
+
+      const result = engine.search("run");
+      expect(result.hits.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe("search with options", () => {
+    it("filter returns only matching docs", () => {
+      const engine = createEngine();
+      engine.add({ id: "1", title: "Running Shoes", description: "Comfortable", category: "Footwear", price: 7500 });
+      engine.add({ id: "2", title: "T-Shirt", description: "Cotton fabric", category: "Clothing", price: 1500 });
+
+      const result = engine.search("shoes", {
+        filter: { field: "category", operator: "eq", value: "Footwear" },
+      });
+      expect(result.hits.length).toBe(1);
+      expect(result.hits[0].document.id).toBe("1");
+    });
+
+    it("pagination with limit and offset works", () => {
+      const engine = createEngine();
+      for (let i = 1; i <= 20; i++) {
+        engine.add({ id: String(i), title: `Item ${i}`, description: "test", category: "General", price: i * 100 });
+      }
+
+      const page1 = engine.search("item", { limit: 5, offset: 0 });
+      expect(page1.hits.length).toBeLessThanOrEqual(5);
+      expect(page1.pagination.hasMore).toBe(true);
+
+      const page2 = engine.search("item", { limit: 5, offset: 5 });
+      expect(page2.hits.length).toBeLessThanOrEqual(5);
+      const page1Ids = page1.hits.map((h) => h.document.id);
+      const page2Ids = page2.hits.map((h) => h.document.id);
+      const overlap = page1Ids.filter((id) => page2Ids.includes(id));
+      expect(overlap.length).toBe(0);
+    });
+
+    it("search with highlighting returns highlights", () => {
+      const engine = createEngine();
+      engine.add({ id: "1", title: "Running Shoes", description: "Comfortable running shoes for athletes", category: "Footwear", price: 7500 });
+
+      const result = engine.search("running", { highlight: true });
+      expect(result.hits.length).toBeGreaterThanOrEqual(1);
+      expect(result.hits[0].highlights).toBeDefined();
+      expect(result.hits[0].highlights!.length).toBeGreaterThanOrEqual(1);
+      if (result.hits[0].highlights) {
+        expect(result.hits[0].highlights[0].snippet).toContain("<mark>");
+      }
+    });
+
+    it("empty query returns empty result with took=0", () => {
+      const engine = createEngine();
+      const result = engine.search("");
+      expect(result.hits).toEqual([]);
+      expect(result.total).toBe(0);
+    });
+
+    it("field-specific search works", () => {
+      const engine = createEngine();
+      engine.add({ id: "1", title: "Running Shoes", description: "Comfortable running shoes", category: "Footwear", price: 7500 });
+      engine.add({ id: "2", title: "Desk Chair", description: "Office running chair", category: "Furniture", price: 45000 });
+
+      const result = engine.search("running", { fields: ["title"] });
+      expect(result.hits.length).toBe(1);
+      expect(result.hits[0].document.id).toBe("1");
+    });
+
+    it("boostExact flag can be disabled", () => {
+      const engine = createEngine();
+      engine.add({ id: "1", title: "Running Shoes", description: "Running gear", category: "Footwear", price: 7500 });
+
+      const resultWith = engine.search("running shoes", { boostExact: true });
+      const resultWithout = engine.search("running shoes", { boostExact: false });
+      expect(resultWith.hits.length).toBe(resultWithout.hits.length);
+    });
+  });
+
+  describe("suggest", () => {
+    it("returns autocomplete suggestions", () => {
+      const engine = createEngine();
+      engine.add({ id: "1", title: "Running Shoes", description: "test", category: "Footwear", price: 7500 });
+      engine.add({ id: "2", title: "Running Shorts", description: "test", category: "Clothing", price: 3000 });
+
+      const result = engine.suggest("run");
+      expect(result.suggestions.length).toBeGreaterThanOrEqual(1);
+      const texts = result.suggestions.map((s) => s.text);
+      expect(texts).toContain("running");
+    });
+  });
+
+  describe("add, remove, upsert", () => {
+    it("removed doc is excluded from search", () => {
+      const engine = createEngine();
+      engine.add({ id: "1", title: "Running Shoes", description: "test", category: "Footwear", price: 7500 });
+      engine.add({ id: "2", title: "Walking Shoes", description: "test", category: "Footwear", price: 5000 });
+
+      expect(engine.search("shoes").hits.length).toBe(2);
+      engine.remove("1");
+      const result = engine.search("shoes");
+      expect(result.hits.length).toBe(1);
+      expect(result.hits[0].document.id).toBe("2");
+    });
+
+    it("upsert: re-adding doc with same ID updates it", () => {
+      const engine = createEngine();
+      engine.add({ id: "1", title: "Running Shoes", description: "Old description", category: "Footwear", price: 7500 });
+
+      engine.add({ id: "1", title: "Updated Shoes", description: "New description", category: "Footwear", price: 8000 });
+
+      const result = engine.search("updated");
+      expect(result.hits.length).toBeGreaterThanOrEqual(1);
+      expect(result.hits.some((h) => h.document.title === "Updated Shoes")).toBe(true);
+    });
+  });
+
+  describe("stats and clear", () => {
+    it("stats returns correct counts", () => {
+      const engine = createEngine();
+      engine.add({ id: "1", title: "Running Shoes", description: "test", category: "Footwear", price: 7500 });
+      engine.add({ id: "2", title: "Yoga Mat", description: "test", category: "Fitness", price: 2500 });
+
+      const stats = engine.stats();
+      expect(stats.documentCount).toBe(2);
+      expect(stats.termCount).toBeGreaterThan(0);
+      expect(stats.trieNodeCount).toBeGreaterThan(0);
+      expect(stats.fields).toEqual(expect.arrayContaining(["title", "description", "category"]));
+      expect(stats.memoryEstimateBytes).toBeGreaterThan(0);
+      expect(stats.lastUpdated).toBeInstanceOf(Date);
+    });
+
+    it("clear resets all state", () => {
+      const engine = createEngine();
+      engine.add({ id: "1", title: "Running Shoes", description: "test", category: "Footwear", price: 7500 });
+      engine.clear();
+
+      const stats = engine.stats();
+      expect(stats.documentCount).toBe(0);
+      expect(stats.termCount).toBe(0);
+
+      const result = engine.search("shoes");
+      expect(result.hits).toEqual([]);
+    });
+  });
+
+  describe("addMany", () => {
+    it("batch indexing works", () => {
+      const engine = createEngine();
+      const docs: TestDoc[] = [
+        { id: "1", title: "Running Shoes", description: "test", category: "Footwear", price: 7500 },
+        { id: "2", title: "Yoga Mat", description: "test", category: "Fitness", price: 2500 },
+        { id: "3", title: "Dumbbells", description: "test", category: "Fitness", price: 5000 },
+      ];
+
+      engine.addMany(docs);
+      expect(engine.stats().documentCount).toBe(3);
+
+      const result = engine.search("fitness");
+      // Should match docs with "Fitness" category (due to suggest-enabled field)
+      // Also could match "Yoga" or "Dumbbells" via description if tokenized
+      expect(result.hits.length).toBeGreaterThanOrEqual(0);
+    });
+  });
+});

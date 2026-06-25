@@ -88,6 +88,9 @@ export function evaluateFilter(
   doc: AnyDocument,
   filter: FilterClause | FilterGroup
 ): boolean {
+  if (typeof filter !== "object" || filter === null) return true;
+  if (Object.keys(filter).length === 0) return true;
+
   if (!isFilterGroup(filter)) {
     return evaluateClause(doc, filter);
   }
