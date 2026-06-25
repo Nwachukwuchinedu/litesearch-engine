@@ -12,6 +12,8 @@ import type {
   SuggestResult,
   IndexStats,
   DocMeta,
+  FilterClause,
+  FilterGroup,
 } from "./types/index";
 
 import { buildTokenizer, type TokenizerFn } from "./core/tokenizer";
@@ -213,157 +215,36 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
     } = options;
 
     const q = query.trim();
-    if (!q) {
-      return this._emptyResult(q, limit, offset, start);
-    }
+    if (!q) return this._emptyResult(q, limit, offset, start);
 
     const queryTokens = this.tokenize(q);
-    if (queryTokens.length === 0) {
-      return this._emptyResult(q, limit, offset, start);
-    }
+    if (queryTokens.length === 0) return this._emptyResult(q, limit, offset, start);
 
-    const targetFields = searchFields
-      ? searchFields.filter((f) => f in this.fields)
-      : Object.keys(this.fields);
-
+    const targetFields = this._resolveSearchFields(searchFields);
     const N = this.docs.size;
     const maxFuzzyDist = this.config.fuzzy.enabled
       ? (this.config.fuzzy.maxDistance ?? 2)
       : 0;
 
-    // ── Score accumulator: docId → raw BM25 score ──────────────────────────
-    const rawScores = new Map<string, number>();
-
-    // ── Track match types per doc ──────────────────────────────────────────
-    const docMatchTypes = new Map<string, "exact" | "prefix" | "fuzzy">();
-
-    // ── Track matched tokens per doc for highlighting ──────────────────────
-    const docMatchedTokens = new Map<string, Set<string>>();
-
-    for (const field of targetFields) {
-      const fieldCfg = this.fields[field];
-      const weight = fieldCfg.weight ?? 1.0;
-      const avgLen = this.docs.avgFieldLength(field);
-
-      for (const token of queryTokens) {
-        const matches = this.index.lookup(field, token, maxFuzzyDist, true);
-
-        for (const { postings, matchType } of matches) {
-          // BM25 per-term scores
-          const termScores = this.scorer.scoreField(
-            postings,
-            // Cast to satisfy BM25Scorer signature
-            new Map(
-              [...this.docs.getAll()].map((m) => [m.id, m])
-            ),
-            field,
-            avgLen,
-            N,
-            weight
-          );
-
-          for (const [docId, score] of termScores) {
-            rawScores.set(docId, (rawScores.get(docId) ?? 0) + score);
-
-            // Track best match type
-            const current = docMatchTypes.get(docId);
-            if (
-              !current ||
-              (matchType === "exact" && current !== "exact") ||
-              (matchType === "prefix" && current === "fuzzy")
-            ) {
-              docMatchTypes.set(docId, matchType);
-            }
-
-            // Track matched tokens for highlighting
-            if (!docMatchedTokens.has(docId)) {
-              docMatchedTokens.set(docId, new Set());
-            }
-            docMatchedTokens.get(docId)!.add(token);
-          }
-        }
-      }
-    }
-
-    // ── Exact phrase boost ─────────────────────────────────────────────────
-    if (boostExact && queryTokens.length > 1) {
-      const exactIds = new Set<string>();
-      for (const [docId, meta] of this.docs.getAll().map((m) => [m.id, m] as const)) {
-        for (const field of targetFields) {
-          const val = getFieldValue(meta.doc, field, this.fields[field]?.path).toLowerCase();
-          if (val.includes(q.toLowerCase())) {
-            exactIds.add(docId);
-          }
-        }
-      }
-      BM25Scorer.applyExactBoost(rawScores, exactIds, 1.5);
-    }
-
-    // ── Normalise scores ────────────────────────────────────────────────────
-    const normScores = BM25Scorer.normalise(rawScores);
-
-    // ── Build candidate list ────────────────────────────────────────────────
-    let candidates: Array<{ id: string; score: number; raw: number }> = [];
-
-    for (const [id, score] of normScores) {
-      if (score < minScore) continue;
-      candidates.push({ id, score, raw: rawScores.get(id)! });
-    }
-
-    // ── Apply filters ───────────────────────────────────────────────────────
-    if (filter) {
-      candidates = candidates.filter((c) => {
-        const meta = this.docs.get(c.id);
-        return meta ? evaluateFilter(meta.doc, filter) : false;
-      });
-    }
-
-    // ── Sort by score DESC ──────────────────────────────────────────────────
-    candidates.sort((a, b) => b.score - a.score);
-
-    const total = candidates.length;
-    const paginated = candidates.slice(offset, offset + limit);
-
-    // ── Build SearchHit objects ─────────────────────────────────────────────
-    const hits: SearchHit<T>[] = [];
-
-    for (const { id, score, raw } of paginated) {
-      const meta = this.docs.get(id);
-      if (!meta) continue;
-
-      const matchedTokens = [...(docMatchedTokens.get(id) ?? [])];
-      const matchType = docMatchTypes.get(id) ?? "fuzzy";
-
-      let highlights;
-      if (doHighlight) {
-        highlights = targetFields
-          .map((field) => {
-            const val = getFieldValue(meta.doc, field, this.fields[field]?.path);
-            if (!val) return null;
-            return highlight(val, matchedTokens, field);
-          })
-          .filter((h): h is NonNullable<typeof h> => h !== null && h.matchedTokens.length > 0);
-      }
-
-      hits.push({
-        document: meta.doc as T,
-        score,
-        rawScore: raw,
-        matchType,
-        highlights,
-      });
-    }
+    // ── Pipeline ───────────────────────────────────────────────────────────
+    const { rawScores, docMatchTypes, docMatchedTokens } = this._lookupAndScore(
+      queryTokens, targetFields, maxFuzzyDist, N
+    );
+    this._applyExactBoost(rawScores, queryTokens, targetFields, q, boostExact);
+    const normScores = this._normaliseScores(rawScores);
+    const { paginated, total } = this._filterAndSortCandidates(
+      normScores, rawScores, filter, minScore, limit, offset
+    );
+    const hits = this._buildHits(
+      paginated, targetFields, doHighlight, docMatchedTokens, docMatchTypes
+    );
 
     return {
       hits,
       total,
       took: Date.now() - start,
       query,
-      pagination: {
-        limit,
-        offset,
-        hasMore: offset + limit < total,
-      },
+      pagination: { limit, offset, hasMore: offset + limit < total },
     };
   }
 
@@ -405,6 +286,161 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
   // ───────────────────────────────────────────────────────────────────────────
   // PRIVATE HELPERS
   // ───────────────────────────────────────────────────────────────────────────
+
+  private _resolveSearchFields(fields?: string[]): string[] {
+    return fields
+      ? fields.filter((f) => f in this.fields)
+      : Object.keys(this.fields);
+  }
+
+  private _lookupAndScore(
+    queryTokens: string[],
+    targetFields: string[],
+    maxFuzzyDist: number,
+    N: number
+  ): {
+    rawScores: Map<string, number>;
+    docMatchTypes: Map<string, "exact" | "prefix" | "fuzzy">;
+    docMatchedTokens: Map<string, Set<string>>;
+  } {
+    const rawScores = new Map<string, number>();
+    const docMatchTypes = new Map<string, "exact" | "prefix" | "fuzzy">();
+    const docMatchedTokens = new Map<string, Set<string>>();
+
+    for (const field of targetFields) {
+      const fieldCfg = this.fields[field];
+      const weight = fieldCfg.weight ?? 1.0;
+      const avgLen = this.docs.avgFieldLength(field);
+
+      for (const token of queryTokens) {
+        const matches = this.index.lookup(field, token, maxFuzzyDist, true);
+
+        for (const { postings, matchType } of matches) {
+          const termScores = this.scorer.scoreField(
+            postings,
+            new Map([...this.docs.getAll()].map((m) => [m.id, m])),
+            field,
+            avgLen,
+            N,
+            weight
+          );
+
+          for (const [docId, score] of termScores) {
+            rawScores.set(docId, (rawScores.get(docId) ?? 0) + score);
+
+            const current = docMatchTypes.get(docId);
+            if (
+              !current ||
+              (matchType === "exact" && current !== "exact") ||
+              (matchType === "prefix" && current === "fuzzy")
+            ) {
+              docMatchTypes.set(docId, matchType);
+            }
+
+            if (!docMatchedTokens.has(docId)) {
+              docMatchedTokens.set(docId, new Set());
+            }
+            docMatchedTokens.get(docId)!.add(token);
+          }
+        }
+      }
+    }
+
+    return { rawScores, docMatchTypes, docMatchedTokens };
+  }
+
+  private _applyExactBoost(
+    rawScores: Map<string, number>,
+    queryTokens: string[],
+    targetFields: string[],
+    q: string,
+    boostExact: boolean
+  ): void {
+    if (!boostExact || queryTokens.length <= 1) return;
+
+    const exactIds = new Set<string>();
+    for (const [docId, meta] of this.docs.getAll().map((m) => [m.id, m] as const)) {
+      for (const field of targetFields) {
+        const val = getFieldValue(meta.doc, field, this.fields[field]?.path).toLowerCase();
+        if (val.includes(q.toLowerCase())) {
+          exactIds.add(docId);
+        }
+      }
+    }
+    BM25Scorer.applyExactBoost(rawScores, exactIds, 1.5);
+  }
+
+  private _normaliseScores(rawScores: Map<string, number>): Map<string, number> {
+    return BM25Scorer.normalise(rawScores);
+  }
+
+  private _filterAndSortCandidates(
+    normScores: Map<string, number>,
+    rawScores: Map<string, number>,
+    filter: FilterClause | FilterGroup | undefined,
+    minScore: number,
+    limit: number,
+    offset: number
+  ): { paginated: Array<{ id: string; score: number; raw: number }>; total: number } {
+    let candidates: Array<{ id: string; score: number; raw: number }> = [];
+
+    for (const [id, score] of normScores) {
+      if (score < minScore) continue;
+      candidates.push({ id, score, raw: rawScores.get(id)! });
+    }
+
+    if (filter) {
+      candidates = candidates.filter((c) => {
+        const meta = this.docs.get(c.id);
+        return meta ? evaluateFilter(meta.doc, filter) : false;
+      });
+    }
+
+    candidates.sort((a, b) => b.score - a.score);
+    const total = candidates.length;
+    const paginated = candidates.slice(offset, offset + limit);
+
+    return { paginated, total };
+  }
+
+  private _buildHits(
+    paginated: Array<{ id: string; score: number; raw: number }>,
+    targetFields: string[],
+    doHighlight: boolean,
+    docMatchedTokens: Map<string, Set<string>>,
+    docMatchTypes: Map<string, "exact" | "prefix" | "fuzzy">
+  ): SearchHit<T>[] {
+    const hits: SearchHit<T>[] = [];
+
+    for (const { id, score, raw } of paginated) {
+      const meta = this.docs.get(id);
+      if (!meta) continue;
+
+      const matchedTokens = [...(docMatchedTokens.get(id) ?? [])];
+      const matchType = docMatchTypes.get(id) ?? "fuzzy";
+
+      let highlights;
+      if (doHighlight) {
+        highlights = targetFields
+          .map((field) => {
+            const val = getFieldValue(meta.doc, field, this.fields[field]?.path);
+            if (!val) return null;
+            return highlight(val, matchedTokens, field);
+          })
+          .filter((h): h is NonNullable<typeof h> => h !== null && h.matchedTokens.length > 0);
+      }
+
+      hits.push({
+        document: meta.doc as T,
+        score,
+        rawScore: raw,
+        matchType,
+        highlights,
+      });
+    }
+
+    return hits;
+  }
 
   private _emptyResult(
     query: string,
