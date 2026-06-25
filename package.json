@@ -1,0 +1,30 @@
+{
+  "name": "litesearch",
+  "version": "1.0.0",
+  "description": "Lightweight, blazing-fast in-memory search engine with fuzzy matching, typo tolerance, ranked suggestions, and real-time index updates. Zero dependencies.",
+  "main": "dist/index.js",
+  "module": "dist/index.esm.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "node dist/tests/index.test.js",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "search",
+    "fuzzy",
+    "elasticsearch",
+    "lightweight",
+    "typescript",
+    "in-memory"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
