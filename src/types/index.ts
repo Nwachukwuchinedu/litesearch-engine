@@ -16,8 +16,6 @@ export interface FieldConfig {
   weight?: number;
   /** Whether to include this field in autocomplete suggestions. Default: false */
   suggest?: boolean;
-  /** Whether to enable fuzzy matching on this field. Default: true */
-  fuzzy?: boolean;
   /**
    * How to extract the value from a nested object.
    * E.g. "meta.brand" would index doc.meta.brand

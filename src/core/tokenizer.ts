@@ -36,27 +36,6 @@ export function defaultTokenizer(
 }
 
 /**
- * Tokenizer that also generates n-gram prefix tokens.
- * Used internally for partial-match indexing.
- * e.g. "shoe" → ["sho", "shoe"] (min prefix = 3)
- */
-export function tokenizeWithPrefixes(
-  text: string,
-  minPrefixLen = 3
-): string[] {
-  const base = defaultTokenizer(text, false);
-  const result = new Set<string>(base);
-
-  for (const token of base) {
-    for (let i = minPrefixLen; i < token.length; i++) {
-      result.add(token.slice(0, i));
-    }
-  }
-
-  return [...result];
-}
-
-/**
  * Normalize a single term for lookup (lowercase, trim).
  */
 export function normalizeTerm(term: string): string {
