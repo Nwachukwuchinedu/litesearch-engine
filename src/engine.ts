@@ -227,13 +227,14 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
       : 0;
 
     // ── Pipeline ───────────────────────────────────────────────────────────
+    const filterDocIds = this._preFilterDocIds(filter);
     const { rawScores, docMatchTypes, docMatchedTokens } = this._lookupAndScore(
-      queryTokens, targetFields, maxFuzzyDist, N
+      queryTokens, targetFields, maxFuzzyDist, N, filterDocIds
     );
     this._applyExactBoost(rawScores, queryTokens, targetFields, boostExact);
     const normScores = this._normaliseScores(rawScores);
     const { paginated, total } = this._filterAndSortCandidates(
-      normScores, rawScores, filter, minScore, limit, offset
+      normScores, rawScores, minScore, limit, offset
     );
     const hits = this._buildHits(
       paginated, targetFields, doHighlight, docMatchedTokens, docMatchTypes
@@ -293,11 +294,25 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
       : Object.keys(this.fields);
   }
 
+  private _preFilterDocIds(
+    filter: FilterClause | FilterGroup | undefined
+  ): Set<string> | undefined {
+    if (!filter) return undefined;
+    const ids = new Set<string>();
+    for (const meta of this.docs.getAll()) {
+      if (evaluateFilter(meta.doc, filter)) {
+        ids.add(meta.id);
+      }
+    }
+    return ids;
+  }
+
   private _lookupAndScore(
     queryTokens: string[],
     targetFields: string[],
     maxFuzzyDist: number,
-    N: number
+    N: number,
+    filterDocIds?: Set<string>
   ): {
     rawScores: Map<string, number>;
     docMatchTypes: Map<string, "exact" | "prefix" | "fuzzy">;
@@ -326,6 +341,7 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
           );
 
           for (const [docId, score] of termScores) {
+            if (filterDocIds && !filterDocIds.has(docId)) continue;
             rawScores.set(docId, (rawScores.get(docId) ?? 0) + score);
 
             const current = docMatchTypes.get(docId);
@@ -376,23 +392,15 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
   private _filterAndSortCandidates(
     normScores: Map<string, number>,
     rawScores: Map<string, number>,
-    filter: FilterClause | FilterGroup | undefined,
     minScore: number,
     limit: number,
     offset: number
   ): { paginated: Array<{ id: string; score: number; raw: number }>; total: number } {
-    let candidates: Array<{ id: string; score: number; raw: number }> = [];
+    const candidates: Array<{ id: string; score: number; raw: number }> = [];
 
     for (const [id, score] of normScores) {
       if (score < minScore) continue;
       candidates.push({ id, score, raw: rawScores.get(id)! });
-    }
-
-    if (filter) {
-      candidates = candidates.filter((c) => {
-        const meta = this.docs.get(c.id);
-        return meta ? evaluateFilter(meta.doc, filter) : false;
-      });
     }
 
     candidates.sort((a, b) => b.score - a.score);
