@@ -2,8 +2,8 @@
 // LiteSearch — Inverted Index
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { InvertedIndex, Postings } from "../types/index.js";
-import { levenshtein, adaptiveMaxDistance } from "../core/levenshtein.js";
+import type { InvertedIndex, Postings } from "../types/index";
+import { levenshtein, adaptiveMaxDistance } from "../core/levenshtein";
 
 export class InvertedIndexStore {
   /**

@@ -7,7 +7,7 @@ import type {
   FilterClause,
   FilterGroup,
   FilterOperator,
-} from "../types/index.js";
+} from "../types/index";
 
 function getNestedValue(doc: AnyDocument, field: string): unknown {
   const parts = field.split(".");

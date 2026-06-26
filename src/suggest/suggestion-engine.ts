@@ -2,8 +2,8 @@
 // LiteSearch — Suggestion Engine (Autocomplete)
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { levenshtein, adaptiveMaxDistance } from "../core/levenshtein.js";
-import type { SuggestResult, SuggestionHit } from "../types/index.js";
+import { levenshtein, adaptiveMaxDistance } from "../core/levenshtein";
+import type { SuggestResult, SuggestionHit } from "../types/index";
 
 // ── Internal trie types (not exported) ──────────────────────────────────────
 

@@ -14,6 +14,12 @@ import type {
   DocMeta,
   FilterClause,
   FilterGroup,
+  BrowseOptions,
+  BrowseHit,
+  BrowseResult,
+  SortOption,
+  FacetConfig,
+  FacetResult,
 } from "./types/index";
 
 import { buildTokenizer, type TokenizerFn } from "./core/tokenizer";
@@ -23,8 +29,13 @@ import { DocumentStore } from "./indexing/document-store";
 import { SuggestionEngine } from "./suggest/suggestion-engine";
 import { evaluateFilter } from "./filters/filter-engine";
 import { highlight } from "./search/highlighter";
+import { sortDocuments } from "./search/sorter";
+import { computeFacets } from "./search/facets";
 
 // ─────────────────────────────────────────────────────────────────────────────
+
+/** Minimal console declaration (no dom/node types available) */
+declare var console: { warn: (msg: string) => void };
 
 function resolveFields<T extends AnyDocument>(
   fields: LiteSearchConfig<T>["fields"]
@@ -37,6 +48,23 @@ function resolveFields<T extends AnyDocument>(
   return fields as Record<string, FieldConfig>;
 }
 
+function flattenValue(val: unknown): string {
+  if (val === null || val === undefined) return "";
+  if (val instanceof Date) return val.toISOString();
+  if (Array.isArray(val)) {
+    return val.map((v) => flattenValue(v)).filter(Boolean).join(" ");
+  }
+  if (typeof val === "string") return val;
+  if (typeof val === "number" || typeof val === "boolean") return String(val);
+  if (typeof val === "object") {
+    return Object.values(val as Record<string, unknown>)
+      .map((v) => flattenValue(v))
+      .filter(Boolean)
+      .join(" ");
+  }
+  return "";
+}
+
 function getFieldValue(doc: AnyDocument, field: string, path?: string): string {
   const key = path ?? field;
   const parts = key.split(".");
@@ -45,11 +73,7 @@ function getFieldValue(doc: AnyDocument, field: string, path?: string): string {
     if (val === null || val === undefined) return "";
     val = (val as Record<string, unknown>)[p];
   }
-
-  if (Array.isArray(val)) return val.join(" ");
-  if (typeof val === "string") return val;
-  if (typeof val === "number" || typeof val === "boolean") return String(val);
-  return "";
+  return flattenValue(val);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -109,8 +133,9 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
   /**
    * Add a single document to the index.
    * If a document with the same ID already exists, it is replaced.
+   * @internal The `_emptyCounts` param is used by addMany() for batch empty-field tracking.
    */
-  add(doc: T): void {
+  add(doc: T, _emptyCounts?: Map<string, number>): void {
     let id: string;
     if (this.idResolver) {
       id = this.idResolver(doc);
@@ -133,8 +158,16 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
     const fieldLengths: Record<string, number> = {};
 
     for (const [field, fieldCfg] of Object.entries(this.fields)) {
-      const rawValue = getFieldValue(doc, field, fieldCfg.path);
-      if (!rawValue) continue;
+      const rawValue = fieldCfg.extract
+        ? fieldCfg.extract(doc)
+        : getFieldValue(doc, field, fieldCfg.path);
+
+      if (!rawValue) {
+        if (_emptyCounts) {
+          _emptyCounts.set(field, (_emptyCounts.get(field) ?? 0) + 1);
+        }
+        continue;
+      }
 
       const tokens = this.tokenize(rawValue);
       fieldLengths[field] = tokens.length;
@@ -166,8 +199,16 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
    * More efficient than calling add() in a loop for large datasets.
    */
   addMany(documents: T[]): void {
+    const emptyCounts = new Map<string, number>();
     for (const doc of documents) {
-      this.add(doc);
+      this.add(doc, emptyCounts);
+    }
+    for (const [field, count] of emptyCounts) {
+      if (count === documents.length) {
+        console.warn(
+          `[LiteSearch] Field "${field}" produced an empty string for all ${count} documents. Check that the field name or path is correct.`
+        );
+      }
     }
   }
 
@@ -239,13 +280,31 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
 
     // ── Pipeline ───────────────────────────────────────────────────────────
     const filterDocIds = this._preFilterDocIds(filter);
+
+    // Compute facets over the filtered doc set (if requested)
+    let facetsResult: Record<string, FacetResult> | undefined;
+    if (options.facets) {
+      let filteredDocs: T[];
+      if (filterDocIds) {
+        filteredDocs = [];
+        for (const meta of this.docs.getAll()) {
+          if (filterDocIds.has(meta.id)) {
+            filteredDocs.push(meta.doc as T);
+          }
+        }
+      } else {
+        filteredDocs = this.docs.getAllDocs<T>();
+      }
+      facetsResult = computeFacets(filteredDocs, options.facets);
+    }
+
     const { rawScores, docMatchTypes, docMatchedTokens } = this._lookupAndScore(
       queryTokens, targetFields, maxFuzzyDist, N, filterDocIds
     );
     this._applyExactBoost(rawScores, queryTokens, targetFields, boostExact);
     const normScores = this._normaliseScores(rawScores);
     const { paginated, total } = this._filterAndSortCandidates(
-      normScores, rawScores, minScore, limit, offset
+      normScores, rawScores, minScore, limit, offset, options.sort
     );
     const hits = this._buildHits(
       paginated, targetFields, doHighlight, docMatchedTokens, docMatchTypes
@@ -257,6 +316,7 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
       took: Date.now() - start,
       query,
       pagination: { limit, offset, hasMore: offset + limit < total },
+      facets: facetsResult,
     };
   }
 
@@ -293,6 +353,105 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
       memoryEstimateBytes: this.docs.estimateMemory(),
       lastUpdated: this.lastUpdated,
     };
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // BROWSE / GET / HAS / EXPORT / IMPORT
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Return all documents with optional filtering, sorting, and pagination.
+   * No full-text scoring is performed.
+   */
+  browse(options: BrowseOptions = {}): BrowseResult<T> {
+    const start = Date.now();
+    const { limit = 10, offset = 0, filter, sort } = options;
+
+    let docs = this.docs.getAll();
+
+    // Filter
+    if (filter) {
+      docs = docs.filter((meta) => evaluateFilter(meta.doc, filter));
+    }
+
+    // Sort using sortDocuments
+    if (sort) {
+      const docMap = new Map<AnyDocument, DocMeta>();
+      for (const meta of docs) {
+        docMap.set(meta.doc, meta);
+      }
+      const sortedDocs = sortDocuments(
+        docs.map((meta) => meta.doc as T),
+        sort
+      );
+      docs = sortedDocs
+        .map((doc) => docMap.get(doc))
+        .filter((m): m is DocMeta => m !== undefined);
+    }
+
+    const total = docs.length;
+    const paginated = docs.slice(offset, offset + limit);
+
+    const hits: BrowseHit<T>[] = paginated.map((meta) => ({
+      document: meta.doc as T,
+    }));
+
+    return {
+      hits,
+      total,
+      took: Date.now() - start,
+      pagination: {
+        limit,
+        offset,
+        hasMore: offset + limit < total,
+      },
+    };
+  }
+
+  /**
+   * Retrieve a single document by its ID.
+   */
+  getById(id: string): T | undefined {
+    const meta = this.docs.get(id);
+    return meta ? (meta.doc as T) : undefined;
+  }
+
+  /**
+   * Check whether a document with the given ID exists in the index.
+   */
+  has(id: string): boolean {
+    return this.docs.has(id);
+  }
+
+  /**
+   * Serialize the index state (documents + config) for later restoration.
+   * Function-typed config fields (tokenize, stemmer, normalizer) are omitted.
+   */
+  export(): { documents: AnyDocument[]; config: Record<string, unknown> } {
+    return {
+      documents: this.docs.getAllDocs<T>(),
+      config: {
+        idField: this.config.idField,
+        fields: this.config.fields,
+        fuzzy: { ...this.config.fuzzy },
+        scoring: { ...this.config.scoring },
+        suggest: { ...this.config.suggest },
+        tokenizer: { language: this.config.tokenizer.language },
+      },
+    };
+  }
+
+  /**
+   * Restore index state from exported data.
+   * Creates a fresh engine with the given config, then bulk-loads the documents.
+   */
+  static import<T extends AnyDocument = AnyDocument>(
+    data: { documents: AnyDocument[]; config: Record<string, unknown> },
+    config: LiteSearchConfig<T>
+  ): LiteSearch<T> {
+    const engine = new LiteSearch<T>(config);
+    engine.addMany(data.documents as T[]);
+    return engine;
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -344,7 +503,7 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
         for (const { postings, matchType } of matches) {
           const termScores = this.scorer.scoreField(
             postings,
-            new Map([...this.docs.getAll()].map((m) => [m.id, m])),
+            this.docs.getMetaMap(),
             field,
             avgLen,
             N,
@@ -405,7 +564,8 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
     rawScores: Map<string, number>,
     minScore: number,
     limit: number,
-    offset: number
+    offset: number,
+    sort?: SortOption
   ): { paginated: Array<{ id: string; score: number; raw: number }>; total: number } {
     const candidates: Array<{ id: string; score: number; raw: number }> = [];
 
@@ -414,7 +574,27 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
       candidates.push({ id, score, raw: rawScores.get(id)! });
     }
 
-    candidates.sort((a, b) => b.score - a.score);
+    if (sort) {
+      // When sort is provided, relevance ordering is traded for field ordering
+      const docMap = new Map<AnyDocument, { id: string; score: number; raw: number }>();
+      const docs: T[] = [];
+      for (const c of candidates) {
+        const meta = this.docs.get(c.id);
+        if (meta) {
+          docMap.set(meta.doc, c);
+          docs.push(meta.doc as T);
+        }
+      }
+      const sortedDocs = sortDocuments(docs, sort);
+      candidates.length = 0;
+      for (const doc of sortedDocs) {
+        const entry = docMap.get(doc);
+        if (entry) candidates.push(entry);
+      }
+    } else {
+      candidates.sort((a, b) => b.score - a.score);
+    }
+
     const total = candidates.length;
     const paginated = candidates.slice(offset, offset + limit);
 

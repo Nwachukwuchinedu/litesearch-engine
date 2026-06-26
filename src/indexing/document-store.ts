@@ -2,7 +2,7 @@
 // LiteSearch — Document Store
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { AnyDocument, DocMeta } from "../types/index.js";
+import type { AnyDocument, DocMeta } from "../types/index";
 
 export class DocumentStore {
   /** docId → DocMeta */
@@ -45,6 +45,10 @@ export class DocumentStore {
 
   has(docId: string): boolean {
     return this.store.has(docId);
+  }
+
+  getMetaMap(): ReadonlyMap<string, DocMeta> {
+    return this.store;
   }
 
   getAll(): DocMeta[] {

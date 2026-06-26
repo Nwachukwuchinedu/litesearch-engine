@@ -8,7 +8,7 @@
 //   3. Penalising very long documents proportionally
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { DocMeta, Postings } from "../types/index.js";
+import type { DocMeta, Postings } from "../types/index";
 
 export interface BM25Config {
   k1: number;  // Term frequency saturation. Typical: 1.2
@@ -39,7 +39,7 @@ export class BM25Scorer {
    */
   scoreField(
     postings: Postings,
-    docMetas: Map<string, DocMeta>,
+    docMetas: ReadonlyMap<string, DocMeta>,
     field: string,
     avgFieldLen: number,
     N: number,

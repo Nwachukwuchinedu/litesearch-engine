@@ -2,7 +2,7 @@
 // LiteSearch — Highlighter
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { HighlightResult } from "../types/index.js";
+import type { HighlightResult } from "../types/index";
 
 /**
  * Generate a highlighted snippet for a given field value and matched tokens.

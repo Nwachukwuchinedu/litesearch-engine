@@ -21,6 +21,13 @@ export interface FieldConfig {
    * E.g. "meta.brand" would index doc.meta.brand
    */
   path?: string;
+  /**
+   * Custom extractor function. When provided, the built-in field value
+   * extraction (getFieldValue) is skipped entirely and this function's
+   * result is used as the raw value for indexing.
+   * Useful for indexing computed values not present on the raw document.
+   */
+  extract?: (doc: AnyDocument) => string;
 }
 
 /**
@@ -161,6 +168,24 @@ export interface FilterGroup {
 // Search Input / Output Types
 // ─────────────────────────────────────────────────────────────────────────────
 
+export interface FacetConfig {
+  type: "terms" | "range" | "date_histogram";
+  size?: number;
+  ranges?: Array<{ label: string; min?: number; max?: number }>;
+  interval?: "day" | "week" | "month" | "year";
+}
+
+export interface FacetResult {
+  type: "terms" | "range" | "date_histogram";
+  buckets: Array<{
+    key: string | number;
+    label?: string;
+    count: number;
+    min?: number;
+    max?: number;
+  }>;
+}
+
 export interface SearchOptions {
   /** Pagination: number of results to return. Default: 10 */
   limit?: number;
@@ -189,6 +214,13 @@ export interface SearchOptions {
    * Whether to boost exact matches to the top. Default: true
    */
   boostExact?: boolean;
+  /** Optional sort. Sorts by field value after BM25 scoring. */
+  sort?: SortOption;
+  /**
+   * Faceted navigation configuration.
+   * Computed on the filtered result set (after filter DSL, before scoring).
+   */
+  facets?: Record<string, FacetConfig>;
 }
 
 export interface HighlightResult {
@@ -228,6 +260,40 @@ export interface SearchResult<T extends AnyDocument = AnyDocument> {
     offset: number;
     hasMore: boolean;
   };
+  /** Faceted navigation results (if requested via options.facets). */
+  facets?: Record<string, FacetResult>;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cross-Index Search Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface SearchAllOptions {
+  /** Index names to search, or { name: weight } map for per-index score multipliers. */
+  indexes?: string[] | Record<string, number>;
+  /** Pagination: number of results to return. Default: 10 */
+  limit?: number;
+  /** Pagination: offset. Default: 0 */
+  offset?: number;
+  /** Optional filter. Applied per-index during search. */
+  filter?: FilterClause | FilterGroup;
+  /** Return highlighted snippets. Default: true */
+  highlight?: boolean;
+}
+
+export interface SearchAllResult {
+  /** Merged, ranked hits tagged with _index. */
+  hits: SearchHit<AnyDocument & { _index: string }>[];
+  /** Total matching documents (before limit/offset). */
+  total: number;
+  /** How long the cross-index search took in milliseconds. */
+  took: number;
+  /** Per-index stats. */
+  perIndex: Record<string, { total: number; took: number }>;
+  /** The query that was executed. */
+  query: string;
+  /** Pagination info. */
+  pagination: { limit: number; offset: number; hasMore: boolean };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -289,4 +355,49 @@ export interface DocMeta {
   fieldLengths: Record<string, number>;
   /** The original document */
   doc: AnyDocument;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sort Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface SortOption {
+  field: string;
+  direction: "asc" | "desc";
+  type?: "string" | "number" | "date";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Browse / Get / Has / Export / Import Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface BrowseOptions {
+  /** Pagination: number of results to return. Default: 10 */
+  limit?: number;
+  /** Pagination: offset. Default: 0 */
+  offset?: number;
+  /** Optional filter. Applied before pagination. */
+  filter?: FilterClause | FilterGroup;
+  /** Optional sort config. */
+  sort?: SortOption;
+}
+
+export interface BrowseHit<T extends AnyDocument = AnyDocument> {
+  /** The original document. */
+  document: T;
+}
+
+export interface BrowseResult<T extends AnyDocument = AnyDocument> {
+  /** List of hits. */
+  hits: BrowseHit<T>[];
+  /** Total matching documents (before limit/offset). */
+  total: number;
+  /** How long the browse took in milliseconds. */
+  took: number;
+  /** Pagination info. */
+  pagination: {
+    limit: number;
+    offset: number;
+    hasMore: boolean;
+  };
 }
