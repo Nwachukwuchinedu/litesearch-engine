@@ -93,6 +93,18 @@ export interface LiteSearchConfig<T extends AnyDocument = AnyDocument> {
     tokenize?: (text: string) => string[];
     /** Language stopwords to strip. Default: "en" */
     language?: "en" | "none";
+    /** Custom stopword set for the chosen language. Overrides built-in stopwords. */
+    stopwords?: Set<string>;
+    /**
+     * Stemmer plugin. Runs on each token after splitting.
+     * Default: identity (no stemming).
+     */
+    stemmer?: (token: string, language: string) => string;
+    /**
+     * Normalizer plugin. Runs on raw text before tokenization.
+     * Default: identity (no normalization).
+     */
+    normalizer?: (token: string) => string;
   };
 }
 

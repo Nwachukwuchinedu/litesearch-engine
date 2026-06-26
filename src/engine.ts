@@ -92,10 +92,7 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
     };
 
     this.fields = resolveFields(config.fields);
-    this.tokenize = buildTokenizer(
-      this.config.tokenizer.tokenize,
-      this.config.tokenizer.language
-    );
+    this.tokenize = buildTokenizer(this.config.tokenizer);
     this.index = new InvertedIndexStore();
     this.docs = new DocumentStore();
     this.suggester = new SuggestionEngine(this.config.suggest.maxResults);
