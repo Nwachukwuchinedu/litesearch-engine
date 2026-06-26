@@ -1,8 +1,10 @@
 # litesearch-engine
 
-**Zero-dependency, blazing-fast, in-memory full-text search engine for Node.js and TypeScript.**
+**Zero-dependency, blazing-fast, in-memory full-text search engine for Node.js and TypeScript — 100% dynamic, domain-agnostic.**
 
 Built to replace Elasticsearch for datasets of up to ~50,000 documents where you need speed, simplicity, and full control — no Docker, no JVM, no DevOps. Search completes in **< 15ms** for 10,000 documents.
+
+**Any data shape, any use case.** Products, blog posts, user profiles, support tickets, log entries, code snippets, recipes, messages — if it's a JSON object with string fields, litesearch indexes and searches it. No schema, no setup, no domain lock-in.
 
 ```
 npm install litesearch-engine
@@ -13,15 +15,16 @@ npm install litesearch-engine
 ## Features
 
 | Feature | Details |
-|---|---|
+|---|---|---|
+| **100% dynamic schema** | Works with any document shape — products, posts, users, tickets, logs, anything |
 | **Full-text search** | BM25+ scoring (the same algorithm powering Elasticsearch/Lucene) |
 | **Fuzzy / typo tolerance** | Levenshtein distance with adaptive thresholds and early-exit optimisation |
-| **Partial matching** | "air" instantly finds "Air Max 270" |
+| **Partial matching** | Any prefix of any word matches instantly |
 | **Autocomplete suggestions** | Trie prefix tree, < 1ms per query |
 | **Nested filters** | AND / OR / NOT with 10 operators |
 | **Highlighted snippets** | `<mark>` tags with match context window |
 | **Live index updates** | add / update / remove in real time, no re-index needed |
-| **100% dynamic schema** | Works with any document shape — products, posts, users, anything |
+| **Domain-agnostic** | No schemas, no models, no setup — index anything |
 | **TypeScript-first** | Full generics, every input/output typed |
 | **Zero dependencies** | Pure TypeScript, 0 npm dependencies |
 
@@ -32,34 +35,33 @@ npm install litesearch-engine
 ```typescript
 import { LiteSearch } from "litesearch-engine";
 
-// 1. Define your document type
-interface Product {
+// 1. Define your document type — any shape works
+interface BlogPost {
   id: string;
-  name: string;
-  description: string;
-  category: string;
-  brand: string;
-  price: number;
+  title: string;
+  body: string;
+  tags: string[];
+  author: string;
 }
 
-// 2. Create the engine
-const engine = new LiteSearch<Product>({
+// 2. Create the engine — no schema, just point at fields
+const engine = new LiteSearch<BlogPost>({
   idField: "id",
   fields: {
-    name:        { weight: 3, suggest: true },
-    description: { weight: 1.5 },
-    category:    { weight: 2,  suggest: true },
-    brand:       { weight: 2.5, suggest: true },
+    title:  { weight: 3, suggest: true },
+    body:   { weight: 1 },
+    tags:   { weight: 1.5 },
+    author: { weight: 2, suggest: true },
   },
 });
 
 // 3. Index your data
-engine.addMany(products); // or engine.add(singleProduct)
+engine.addMany(posts);
 
-// 4. Search
-const result = engine.search("running shoes");
-console.log(result.hits[0].document.name); // → "Nike Air Max 270"
-console.log(result.took);                  // → 3 (ms)
+// 4. Search — BM25 scoring, fuzzy matching, all automatic
+const result = engine.search("typescript performance");
+console.log(result.hits[0].document.title); // best match
+console.log(result.took);                    // → 2 (ms)
 ```
 
 ---
