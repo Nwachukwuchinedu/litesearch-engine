@@ -1,11 +1,11 @@
-# litesearch
+# litesearch-engine
 
 **Zero-dependency, blazing-fast, in-memory full-text search engine for Node.js and TypeScript.**
 
 Built to replace Elasticsearch for datasets of up to ~50,000 documents where you need speed, simplicity, and full control — no Docker, no JVM, no DevOps. Search completes in **< 15ms** for 10,000 documents.
 
 ```
-npm install litesearch
+npm install litesearch-engine
 ```
 
 ---
@@ -30,7 +30,7 @@ npm install litesearch
 ## Quick Start
 
 ```typescript
-import { LiteSearch } from "litesearch";
+import { LiteSearch } from "litesearch-engine";
 
 // 1. Define your document type
 interface Product {
@@ -87,11 +87,11 @@ console.log(result.took);                  // → 3 (ms)
 ## Installation
 
 ```bash
-npm install litesearch
+npm install litesearch-engine
 # or
-yarn add litesearch
+yarn add litesearch-engine
 # or
-pnpm add litesearch
+pnpm add litesearch-engine
 ```
 
 **Requirements:** Node.js 16+, TypeScript 4.7+ (if using TypeScript).
@@ -666,7 +666,7 @@ engine.search("laptop bag", { minScore: 0.2 }); // drop weak matches
 
 ```typescript
 // search.service.ts — module-level singleton
-import { LiteSearch } from "litesearch";
+import { LiteSearch } from "litesearch-engine";
 export const searchEngine = new LiteSearch({ ... });
 ```
 
