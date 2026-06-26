@@ -15,7 +15,7 @@ npm install litesearch-engine
 ## Features
 
 | Feature | Details |
-|---|---|---|
+|---|---|
 | **100% dynamic schema** | Works with any document shape — products, posts, users, tickets, logs, anything |
 | **Full-text search** | BM25+ scoring (the same algorithm powering Elasticsearch/Lucene) |
 | **Fuzzy / typo tolerance** | Levenshtein distance with adaptive thresholds and early-exit optimisation |
@@ -27,6 +27,11 @@ npm install litesearch-engine
 | **Domain-agnostic** | No schemas, no models, no setup — index anything |
 | **TypeScript-first** | Full generics, every input/output typed |
 | **Zero dependencies** | Pure TypeScript, 0 npm dependencies |
+| **Browse & list** | browse(), getById(), has() — no query string needed |
+| **Sort** | Sort by any field (string, number, date), in search or browse |
+| **Facets / aggregations** | terms, range, date_histogram — computed over filtered sets |
+| **Multi-index manager** | LiteSearchManager with cross-index searchAll, weighted merging |
+| **Export / Import** | serialize/deserialize + optional file persistence |
 
 ---
 
@@ -69,20 +74,21 @@ console.log(result.took);                    // → 2 (ms)
 ## Table of Contents
 
 1. [Installation](#installation)
-2. [Configuration](#configuration)
-3. [Indexing Documents](#indexing-documents)
-4. [Searching](#searching)
-5. [Filters](#filters)
-6. [Autocomplete / Suggestions](#autocomplete--suggestions)
-7. [Highlights](#highlights)
-8. [Live Index Updates](#live-index-updates)
-9. [Pagination](#pagination)
-10. [Stats](#stats)
-11. [Advanced: Custom Tokenizer](#advanced-custom-tokenizer)
-12. [Advanced: Custom Scoring](#advanced-custom-scoring)
-13. [Output Format Reference](#output-format-reference)
-14. [Performance Guide](#performance-guide)
-15. [Architecture Deep Dive](#architecture-deep-dive)
+2. [Universal Usage](#universal-usage)
+3. [Configuration](#configuration)
+4. [Indexing Documents](#indexing-documents)
+5. [Searching](#searching)
+6. [Filters](#filters)
+7. [Autocomplete / Suggestions](#autocomplete--suggestions)
+8. [Highlights](#highlights)
+9. [Live Index Updates](#live-index-updates)
+10. [Pagination](#pagination)
+11. [Stats](#stats)
+12. [Advanced: Custom Tokenizer](#advanced-custom-tokenizer)
+13. [Advanced: Custom Scoring](#advanced-custom-scoring)
+14. [Output Format Reference](#output-format-reference)
+15. [Performance Guide](#performance-guide)
+16. [Architecture Deep Dive](#architecture-deep-dive)
 
 ---
 
@@ -97,6 +103,301 @@ pnpm add litesearch-engine
 ```
 
 **Requirements:** Node.js 16+, TypeScript 4.7+ (if using TypeScript).
+
+---
+
+## Universal Usage
+
+litesearch-engine ingests **any JSON document shape** — no schema, no setup, no config beyond pointing at which fields to index. Every feature below works with any domain: products, users, blog posts, legal cases, recipes, support tickets, logs, you name it.
+
+### 1. User Directory
+
+```typescript
+import { LiteSearch } from "litesearch-engine";
+
+interface User {
+  id: string;
+  name: string;
+  email: string;
+  department: string;
+  bio: string;
+}
+
+const users = new LiteSearch<User>({
+  idField: "id",
+  fields: {
+    name:       { weight: 3, suggest: true },
+    email:      { weight: 2 },
+    department: { weight: 1, suggest: true },
+    bio:        { weight: 1 },
+  },
+});
+
+users.addMany([
+  { id: "1", name: "Chiamaka Obi",   email: "chiamaka@example.com", department: "Engineering", bio: "Full-stack developer" },
+  { id: "2", name: "Kofi Mensah",    email: "kofi@example.com",     department: "Design",      bio: "UX designer" },
+  { id: "3", name: "Aisha Bello",    email: "aisha@example.com",    department: "Marketing",   bio: "Content strategist" },
+]);
+
+// Full-text search — BM25 scoring, fuzzy, prefix, all automatic
+const r = users.search("chiamaka dev");
+console.log(r.hits[0].document.name); // "Chiamaka Obi"
+
+// Autocomplete — trie prefix lookup < 1ms
+const s = users.suggest("chi");
+console.log(s.suggestions[0].text); // "chiamaka"
+
+// Browse all — with filter + sort
+const engineering = users.browse({
+  filter: { field: "department", operator: "eq", value: "Engineering" },
+  sort:   { field: "name", direction: "asc" },
+});
+
+// Faceted navigation — department counts
+const faceted = users.search("", {
+  facets: { department: { type: "terms", size: 5 } },
+});
+console.log(faceted.facets!.department.buckets);
+// → [{ key: "Engineering", count: 1 }, { key: "Design", count: 1 }, ...]
+```
+
+### 2. Legal Case Database
+
+```typescript
+interface LegalCase {
+  caseNumber: string;
+  title: string;
+  summary: string;
+  jurisdiction: string;
+  year: number;
+}
+
+const cases = new LiteSearch<LegalCase>({
+  idField: "caseNumber",         // custom idField
+  fields: {
+    title:        { weight: 3, suggest: true },
+    summary:      { weight: 2 },
+    jurisdiction: { weight: 1 },
+  },
+});
+
+cases.addMany([
+  { caseNumber: "SC/1/2024", title: "Maga v. INEC",      summary: "Electoral dispute",        jurisdiction: "Supreme Court", year: 2024 },
+  { caseNumber: "CA/45/2023", title: "Bello v. State",    summary: "Criminal appeal",           jurisdiction: "Court of Appeal", year: 2023 },
+  { caseNumber: "HC/12/2022", title: "Okafor v. UBA Plc", summary: "Banking and contract law",  jurisdiction: "High Court", year: 2022 },
+]);
+
+// Fuzzy finds typos — "electral" matches "Electoral"
+const result = cases.search("electral dispuite", { fuzzy: { enabled: true } });
+
+// Filter by jurisdiction + year range
+result = cases.search("appeal", {
+  filter: {
+    AND: [
+      { field: "jurisdiction", operator: "eq", value: "Court of Appeal" },
+      { field: "year", operator: "gte", value: 2020 },
+    ],
+  },
+});
+
+// Exact ID lookup
+const c = cases.getById("SC/1/2024");
+
+// Existence check
+if (cases.has("HC/12/2022")) { /* ... */ }
+```
+
+### 3. Recipe Collection
+
+```typescript
+interface Recipe {
+  id: string;
+  name: string;
+  ingredients: string[];
+  cuisine: string;
+  prepTime: number; // minutes
+  instructions: string;
+}
+
+// Array fields are auto-joined: ingredients: ["rice", "beans"] → "rice beans"
+const recipes = new LiteSearch<Recipe>({
+  fields: {
+    name:         { weight: 3, suggest: true },
+    ingredients:  { weight: 2 },
+    cuisine:      { weight: 1, suggest: true },
+    instructions: { weight: 1 },
+  },
+});
+
+recipes.addMany([
+  { id: "1", name: "Jollof Rice",      ingredients: ["rice", "tomatoes", "pepper", "onions"], cuisine: "West African", prepTime: 60, instructions: "..." },
+  { id: "2", name: "Egusi Soup",       ingredients: ["egusi", "pumpkin leaves", "palm oil"],   cuisine: "Nigerian",    prepTime: 90, instructions: "..." },
+  { id: "3", name: "Yam Porridge",     ingredients: ["yam", "palm oil", "fish"],               cuisine: "Nigerian",    prepTime: 45, instructions: "..." },
+  { id: "4", name: "Pad Thai",         ingredients: ["rice noodles", "shrimp", "peanuts"],     cuisine: "Thai",        prepTime: 30, instructions: "..." },
+]);
+
+// Search by ingredient — "rice" finds Jollof Rice, Yam Porridge, Pad Thai
+const riceDishes = recipes.search("rice");
+
+// Sort by prep time (ascending)
+const quickMeals = recipes.search("", { sort: { field: "prepTime", direction: "asc", type: "number" } });
+
+// Facet by cuisine
+const byCuisine = recipes.search("", {
+  facets: { cuisine: { type: "terms", size: 10 } },
+});
+
+// Browse with pagination (20 per page)
+const page2 = recipes.browse({ limit: 20, offset: 20 });
+```
+
+### 4. Job Board
+
+```typescript
+interface Job {
+  _id: string;
+  title: string;
+  skills: string[];
+  location: string;
+  salaryMin: number;
+  salaryMax: number;
+}
+
+// Use idResolver for non-standard IDs — here _id is already a string
+const jobs = new LiteSearch<Job>({
+  idField: "_id",     // direct mapping
+  fields: {
+    title:    { weight: 3, suggest: true },
+    skills:   { weight: 2 },
+    location: { weight: 1, suggest: true },
+  },
+  tokenizer: {
+    language: "none",  // keep all tokens — "React" and "react" both exist
+    normalizer: (t) => t.toLowerCase(),  // case-insensitive searching
+  },
+});
+
+jobs.addMany([
+  { _id: "1", title: "Senior React Engineer", skills: ["React", "TypeScript", "Node.js"], location: "Lagos", salaryMin: 8000000, salaryMax: 15000000 },
+  { _id: "2", title: "UX Designer",           skills: ["Figma", "User Research"],          location: "Remote", salaryMin: 5000000, salaryMax: 10000000 },
+  { _id: "3", title: "DevOps Lead",           skills: ["AWS", "Kubernetes", "Terraform"],  location: "Nairobi", salaryMin: 12000000, salaryMax: 20000000 },
+]);
+
+// Range filter on salary
+const seniorRoles = jobs.search("senior", {
+  filter: {
+    AND: [
+      { field: "salaryMin", operator: "gte", value: 5000000 },
+      { field: "salaryMax", operator: "lte", value: 15000000 },
+    ],
+  },
+  sort: { field: "salaryMin", direction: "desc", type: "number" },
+});
+```
+
+### 5. Multi-Index Manager — Cross-Search Users, Articles & Products
+
+```typescript
+import { LiteSearch, LiteSearchManager } from "litesearch-engine";
+
+const manager = new LiteSearchManager();
+
+manager.createIndex("users", {
+  fields: { name: { weight: 3, suggest: true }, bio: { weight: 1 } },
+});
+manager.createIndex("articles", {
+  fields: { title: { weight: 3, suggest: true }, body: { weight: 1 } },
+});
+manager.createIndex("products", {
+  fields: { name: { weight: 3, suggest: true }, description: { weight: 1 } },
+});
+
+manager.add("users",    { id: "1", name: "Kofi Mensah", bio: "UX designer" });
+manager.add("articles", { id: "1", title: "Design Systems", body: "How to build scalable design systems" });
+manager.add("products", { id: "1", name: "Wireframe Kit", description: "UI wireframe components for Figma" });
+
+// Single-index search
+const userResult = manager.search("users", "kofi");
+
+// Cross-index search — merged, ranked, tagged
+const all = manager.searchAll("design", {
+  indexes: { users: 1.0, articles: 1.5, products: 1.0 }, // per-index weight
+  limit: 20,
+});
+
+console.log(all.hits[0].document._index); // "articles" (highest weight × matched)
+console.log(all.perIndex);
+// → { users: { total: 1, took: 2 }, articles: { total: 1, took: 3 }, products: { total: 1, took: 2 } }
+```
+
+### Nested Documents & Custom ID Resolver
+
+Documents with nested objects work via dot-path fields. MongoDB-style `_id` ObjectIds work via `idResolver`:
+
+```typescript
+// A document with nested address and an ObjectId-style _id
+interface Customer {
+  _id: { toString: () => string };
+  name: string;
+  address: { city: string; state: string };
+  tags: Array<{ name: string }>;
+}
+
+const customers = new LiteSearch<Customer>({
+  idField: "_id",                                       // dot-path NOT needed for top-level
+  idResolver: (doc) => (doc as any)._id.toString(),      // extract string from ObjectId
+  fields: {
+    name:          { weight: 3, suggest: true },
+    "address.city":  { weight: 2, path: "address.city" },  // dot-path to nested value
+    "address.state": { weight: 1, path: "address.state" },
+    tags:          { weight: 2 },                           // arrays of objects are auto-flattened
+  },
+});
+
+customers.add({
+  _id: { toString: () => "cust_001" },
+  name: "Amara Okafor",
+  address: { city: "Lagos", state: "Lagos" },
+  tags: [{ name: "vip" }, { name: "wholesale" }],
+});
+
+// All of these find the document:
+customers.search("amara");
+customers.search("lagos");     // matches address.city + address.state
+customers.search("vip");       // matches flattened tags array
+customers.getById("cust_001"); // ✓ works because idResolver maps _id → string
+```
+
+### Custom Field Extraction
+
+Use `FieldConfig.extract` to index computed values that don't exist on the raw document:
+
+```typescript
+const engine = new LiteSearch({
+  fields: {
+    "fullName": { weight: 3, extract: (doc) => `${doc.firstName} ${doc.lastName}` },
+  },
+});
+
+engine.add({ id: "1", firstName: "Chiamaka", lastName: "Obi" });
+engine.search("chiamaka obi"); // ✓ matches from computed "fullName"
+```
+
+### Persistence: Save & Restore
+
+```typescript
+import { serialize, deserialize, saveToFile, loadFromFile } from "litesearch-engine";
+
+// Serialize to JSON string
+const json = serialize(engine);
+
+// Restore from JSON
+const restored = deserialize(json, { fields: { name: { weight: 3 } } });
+
+// Node.js file persistence (browser-safe — throws if fs not available)
+await saveToFile(engine, "./search-index.json");
+const fromDisk = await loadFromFile("./search-index.json", { fields: { name: { weight: 3 } } });
+```
 
 ---
 
