@@ -55,7 +55,7 @@ function getFieldValue(doc: AnyDocument, field: string, path?: string): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export class LiteSearch<T extends AnyDocument = AnyDocument> {
-  private config: Required<LiteSearchConfig<T>>;
+  private config: Omit<Required<LiteSearchConfig<T>>, 'idResolver'>;
   private fields: Record<string, FieldConfig>;
   private tokenize: TokenizerFn;
   private index: InvertedIndexStore;
@@ -63,8 +63,11 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
   private suggester: SuggestionEngine;
   private scorer: BM25Scorer;
   private lastUpdated: Date | null = null;
+  private idResolver?: (doc: AnyDocument) => string;
 
   constructor(config: LiteSearchConfig<T>) {
+    this.idResolver = config.idResolver;
+
     // Build full config with defaults
     this.config = {
       idField: (config.idField ?? "id") as keyof T & string,
@@ -108,8 +111,19 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
    * If a document with the same ID already exists, it is replaced.
    */
   add(doc: T): void {
-    const id = String(doc[this.config.idField]);
-    if (!id) throw new Error(`Document missing idField: "${this.config.idField}"`);
+    let id: string;
+    if (this.idResolver) {
+      id = this.idResolver(doc);
+    } else {
+      id = getFieldValue(doc, '', this.config.idField as string);
+    }
+
+    if (!id || id.trim() === '') {
+      const keys = Object.keys(doc);
+      throw new Error(
+        `Document missing valid idField: "${this.config.idField}". Available keys: [${keys.join(', ')}]`
+      );
+    }
 
     // Remove existing doc first (upsert behaviour)
     if (this.docs.has(id)) {

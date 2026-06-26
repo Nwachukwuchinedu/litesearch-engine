@@ -34,6 +34,13 @@ export interface LiteSearchConfig<T extends AnyDocument = AnyDocument> {
   idField?: keyof T & string;
 
   /**
+   * Custom ID resolver function.
+   * When provided, this is called instead of field lookup.
+   * Useful for MongoDB ObjectId, composite keys, UUID generation, etc.
+   */
+  idResolver?: (doc: AnyDocument) => string;
+
+  /**
    * Fields to index and their configurations.
    * If you pass a string array, all fields use default config.
    *
