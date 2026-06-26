@@ -65,10 +65,14 @@ export class SuggestionEngine {
     this._removeDocFromNode(this.root, docId);
   }
 
-  private _removeDocFromNode(node: TrieNode, docId: string): void {
+  private _removeDocFromNode(node: TrieNode, docId: string, parent?: TrieNode, char?: string): void {
     node.docIds.delete(docId);
-    for (const child of node.children.values()) {
-      this._removeDocFromNode(child, docId);
+    for (const [ch, child] of node.children) {
+      this._removeDocFromNode(child, docId, node, ch);
+    }
+    if (parent && char && node.docIds.size === 0 && node.children.size === 0 && !node.isWord) {
+      parent.children.delete(char);
+      this._nodeCount--;
     }
   }
 

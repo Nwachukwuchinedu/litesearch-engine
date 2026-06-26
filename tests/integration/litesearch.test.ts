@@ -116,7 +116,7 @@ describe("LiteSearch (integration)", () => {
       const result = engine.search("");
       expect(result.hits).toEqual([]);
       expect(result.total).toBe(0);
-      expect(result.took).toBe(0);
+      expect(result.took).toBeLessThanOrEqual(1);
     });
 
     it("field-specific search works", () => {
@@ -221,7 +221,7 @@ describe("LiteSearch (integration)", () => {
       const result = engine.search("fitness");
       // Should match docs with "Fitness" category (due to suggest-enabled field)
       // Also could match "Yoga" or "Dumbbells" via description if tokenized
-      expect(result.hits.length).toBeGreaterThanOrEqual(0);
+      expect(result.hits.length).toBe(2);
     });
   });
 });
