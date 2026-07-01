@@ -274,6 +274,8 @@ export interface HighlightResult {
 }
 
 export interface SearchHit<T extends AnyDocument = AnyDocument> {
+  /** The document ID. Always present, even when storeDocuments is false. */
+  id: string;
   /** The original document (null when storeDocuments is false). */
   document: T | null;
   /** Normalised relevance score (0–1). 1 = perfect match. */

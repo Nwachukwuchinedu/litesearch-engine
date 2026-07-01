@@ -245,7 +245,7 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
       this.filterIndex.add(id, field, rawFieldValue);
     }
 
-    const meta: DocMeta = { id, fieldLengths, doc: this.config.storeDocuments !== false ? doc as AnyDocument : null };
+    const meta: DocMeta = { id, fieldLengths, doc: this.config.storeDocuments ? doc as AnyDocument : null };
     this.docs.add(meta);
     this.scorer.invalidateIdfCache();
     this.lastUpdated = new Date();
@@ -334,7 +334,7 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
         this.filterIndex.add(id, field, rawFieldValue);
       }
 
-      allMetas.push({ id, fieldLengths, doc: this.config.storeDocuments !== false ? doc as AnyDocument : null });
+      allMetas.push({ id, fieldLengths, doc: this.config.storeDocuments ? doc as AnyDocument : null });
     }
 
     // Phase 3: Batch-insert suggestions
@@ -555,23 +555,29 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
     if (filter) {
       docs = docs.filter((meta) => {
         if (meta.doc) return evaluateFilter(meta.doc, filter);
-        return this._evaluateFilterWithIndex(filter)?.has(meta.id) ?? true;
+        return this._evaluateFilterWithIndex(filter)?.has(meta.id) ?? false;
       });
     }
 
     // Sort using sortDocuments
     if (sort) {
-      const docMap = new Map<AnyDocument | null, DocMeta>();
-      for (const meta of docs) {
-        docMap.set(meta.doc, meta);
+      if (!this.config.storeDocuments) {
+        console.warn(
+          "[LiteSearch] Sort requested in browse() but storeDocuments is false — ignoring sort."
+        );
+      } else {
+        const docMap = new Map<AnyDocument | null, DocMeta>();
+        for (const meta of docs) {
+          docMap.set(meta.doc, meta);
+        }
+        const sortedDocs = sortDocuments(
+          docs.map((meta) => meta.doc as T),
+          sort
+        );
+        docs = sortedDocs
+          .map((doc) => docMap.get(doc))
+          .filter((m): m is DocMeta => m !== undefined);
       }
-      const sortedDocs = sortDocuments(
-        docs.map((meta) => meta.doc as T),
-        sort
-      );
-      docs = sortedDocs
-        .map((doc) => docMap.get(doc))
-        .filter((m): m is DocMeta => m !== undefined);
     }
 
     const total = docs.length;
@@ -614,7 +620,7 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
    */
   export(): { documents: AnyDocument[]; config: Record<string, unknown> } {
     return {
-      documents: this.config.storeDocuments !== false ? this.docs.getAllDocs<T>() : [],
+      documents: this.config.storeDocuments ? this.docs.getAllDocs<T>() : [],
       config: {
         idField: this.config.idField,
         fields: this.config.fields,
@@ -992,23 +998,31 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
     const total = candidates.length;
 
     if (sort) {
-      // When sort is provided, relevance ordering is traded for field ordering
-      const docMap = new Map<AnyDocument | null, { id: string; score: number; raw: number }>();
-      const docs: T[] = [];
-      for (const c of candidates) {
-        const meta = this.docs.get(c.id);
-        if (meta) {
-          docMap.set(meta.doc, c);
-          if (meta.doc) docs.push(meta.doc as T);
+      if (!this.config.storeDocuments) {
+        console.warn(
+          "[LiteSearch] Sort requested but storeDocuments is false — falling back to relevance ordering."
+        );
+      } else {
+        // When sort is provided, relevance ordering is traded for field ordering
+        const docMap = new Map<AnyDocument | null, { id: string; score: number; raw: number }>();
+        const docs: T[] = [];
+        for (const c of candidates) {
+          const meta = this.docs.get(c.id);
+          if (meta) {
+            docMap.set(meta.doc, c);
+            if (meta.doc) docs.push(meta.doc as T);
+          }
+        }
+        const sortedDocs = sortDocuments(docs, sort);
+        candidates.length = 0;
+        for (const doc of sortedDocs) {
+          const entry = docMap.get(doc);
+          if (entry) candidates.push(entry);
         }
       }
-      const sortedDocs = sortDocuments(docs, sort);
-      candidates.length = 0;
-      for (const doc of sortedDocs) {
-        const entry = docMap.get(doc);
-        if (entry) candidates.push(entry);
-      }
-    } else {
+    }
+
+    if (!sort || !this.config.storeDocuments) {
       const k = limit + offset;
       if (k > 0 && k < candidates.length) {
         // Bounded min-heap: keep top-k by score
@@ -1095,6 +1109,7 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
       }
 
       hits.push({
+        id,
         document: doc,
         score,
         rawScore: raw,
