@@ -11,6 +11,7 @@
 - BK-tree for O(log n) fuzzy term matching (replaces O(n) term set scan)
 - PrefixTrie for O(k) prefix lookups (replaces O(n) term scan)
 - FilterIndex for O(1) equality and range filter evaluation (replaces O(n) doc scan)
+- `storeDocuments` option to disable full document retention, saving significant memory for large datasets
 
 ### Changed
 - **Highlighter:** Replaced per-token regex loop with a single combined alternation regex for O(1) regex passes
