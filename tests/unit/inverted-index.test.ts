@@ -81,6 +81,27 @@ describe("InvertedIndexStore", () => {
       const results = store.getFuzzy("title", "xyzabc", 2);
       expect(results).toEqual([]);
     });
+
+    it("uses BK-tree - returns correct results with many terms", () => {
+      const store = new InvertedIndexStore();
+      const words = [
+        "hello", "hallo", "hullo", "hillo", "helly", "world",
+        "apple", "appla", "apply", "applt", "banana", "cherry",
+        "cat", "car", "cart", "care", "bat", "bar", "bart", "cut",
+        "testing", "tested", "tester", "tests", "tasking",
+      ];
+      for (const w of words) {
+        store.addPosting("title", w, `doc-${w}`, 0);
+      }
+      const results = store.getFuzzy("title", "hello", 2);
+      expect(results.length).toBeGreaterThanOrEqual(4);
+      expect(results.some((r) => r.term === "hello" && r.distance === 0)).toBe(true);
+      expect(results.some((r) => r.term === "hallo" && r.distance === 1)).toBe(true);
+      expect(results.some((r) => r.term === "hullo" && r.distance === 1)).toBe(true);
+      expect(results.some((r) => r.term === "hillo" && r.distance === 1)).toBe(true);
+      expect(results.some((r) => r.term === "helly" && r.distance === 1)).toBe(true);
+      expect(results.every((r) => r.distance <= 2)).toBe(true);
+    });
   });
 
   describe("lookup", () => {

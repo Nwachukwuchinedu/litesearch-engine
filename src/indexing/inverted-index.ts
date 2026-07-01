@@ -3,7 +3,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { InvertedIndex, Postings } from "../types/index";
-import { levenshtein, adaptiveMaxDistance } from "../core/levenshtein";
+import { adaptiveMaxDistance } from "../core/levenshtein";
+import { BKTree } from "./bk-tree";
 
 export class InvertedIndexStore {
   /**
@@ -12,8 +13,11 @@ export class InvertedIndexStore {
    */
   private indexes: Map<string, InvertedIndex> = new Map();
 
-  /** All unique terms per field — cached for fuzzy scan */
+  /** All unique terms per field — cached for prefix scan */
   private termSets: Map<string, Set<string>> = new Map();
+
+  /** BK-tree per field for O(log n) fuzzy term lookup */
+  private bkTrees: Map<string, BKTree> = new Map();
 
   /** Per-document term tracking: docId → field → Set<term> */
   private docTerms: Map<string, Map<string, Set<string>>> = new Map();
@@ -25,13 +29,17 @@ export class InvertedIndexStore {
     if (!this.indexes.has(field)) {
       this.indexes.set(field, new Map());
       this.termSets.set(field, new Set());
+      this.bkTrees.set(field, new BKTree());
     }
 
     const fieldIndex = this.indexes.get(field)!;
     const termSet = this.termSets.get(field)!;
+    const bkTree = this.bkTrees.get(field)!;
 
-    if (!fieldIndex.has(term)) {
+    const isNewTerm = !fieldIndex.has(term);
+    if (isNewTerm) {
       fieldIndex.set(term, new Map());
+      bkTree.insert(term);
     }
 
     const postings = fieldIndex.get(term)!;
@@ -116,34 +124,25 @@ export class InvertedIndexStore {
     query: string,
     maxDistance: number
   ): Array<{ term: string; postings: Postings; distance: number }> {
-    const termSet = this.termSets.get(field);
+    const bkTree = this.bkTrees.get(field);
     const fieldIndex = this.indexes.get(field);
-    if (!termSet || !fieldIndex) return [];
+    if (!bkTree || !fieldIndex) return [];
 
     const adaptive = adaptiveMaxDistance(query, maxDistance);
     if (adaptive === 0) {
-      // No fuzzy — exact only
       const exact = fieldIndex.get(query);
       if (exact) return [{ term: query, postings: exact, distance: 0 }];
       return [];
     }
 
+    const bkResults = bkTree.search(query, adaptive);
     const results: Array<{ term: string; postings: Postings; distance: number }> = [];
-
-    for (const term of termSet) {
-      // Quick length filter before expensive Levenshtein
-      if (Math.abs(term.length - query.length) > adaptive) continue;
-
-      const dist = levenshtein(query, term, adaptive);
-      if (dist <= adaptive) {
-        const postings = fieldIndex.get(term);
-        if (postings && postings.size > 0) {
-          results.push({ term, postings, distance: dist });
-        }
+    for (const { term, distance } of bkResults) {
+      const postings = fieldIndex.get(term);
+      if (postings && postings.size > 0) {
+        results.push({ term, postings, distance });
       }
     }
-
-    // Sort: exact first, then by distance, then alphabetical
     results.sort((a, b) => a.distance - b.distance || a.term.localeCompare(b.term));
     return results;
   }
@@ -259,6 +258,7 @@ export class InvertedIndexStore {
   clear(): void {
     this.indexes.clear();
     this.termSets.clear();
+    this.bkTrees.clear();
     this.docTerms.clear();
   }
 }
