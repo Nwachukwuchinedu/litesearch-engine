@@ -132,6 +132,10 @@ export class FilterIndex {
     return result;
   }
 
+  getFieldValues(docId: string, field: string): Set<unknown> {
+    return this.docFields.get(docId)?.get(field) ?? new Set();
+  }
+
   getAllDocIds(): Set<string> {
     return new Set(this.docFields.keys());
   }

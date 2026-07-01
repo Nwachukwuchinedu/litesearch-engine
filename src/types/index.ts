@@ -154,6 +154,13 @@ export interface LiteSearchConfig<T extends AnyDocument = AnyDocument> {
    * When enabled, identical queries within the TTL window are served from cache.
    */
   cache?: CacheConfig;
+
+  /**
+   * Whether to retain the original document object in memory.
+   * When false, documents are not stored, saving memory but search hits
+   * will have `document: null`. Default: true.
+   */
+  storeDocuments?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -267,8 +274,8 @@ export interface HighlightResult {
 }
 
 export interface SearchHit<T extends AnyDocument = AnyDocument> {
-  /** The original document. */
-  document: T;
+  /** The original document (null when storeDocuments is false). */
+  document: T | null;
   /** Normalised relevance score (0–1). 1 = perfect match. */
   score: number;
   /** Raw BM25 score (before normalisation). */
@@ -387,8 +394,8 @@ export interface DocMeta {
   id: string;
   /** Token count per field */
   fieldLengths: Record<string, number>;
-  /** The original document */
-  doc: AnyDocument;
+  /** The original document (null when storeDocuments is false) */
+  doc: AnyDocument | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

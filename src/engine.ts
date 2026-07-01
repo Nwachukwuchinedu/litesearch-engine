@@ -113,6 +113,7 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
 
     // Build full config with defaults
     this.config = {
+      storeDocuments: config.storeDocuments !== false,
       idField: (config.idField ?? "id") as keyof T & string,
       fields: config.fields,
       fuzzy: {
@@ -147,7 +148,7 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
     this.fields = resolveFields(config.fields);
     this.tokenize = buildTokenizer(this.config.tokenizer);
     this.index = new InvertedIndexStore();
-    this.docs = new DocumentStore();
+    this.docs = new DocumentStore(config.storeDocuments !== false);
     this.filterIndex = new FilterIndex();
     this.suggester = new SuggestionEngine(this.config.suggest.maxResults);
     this.scorer = new BM25Scorer(this.config.scoring);
@@ -244,7 +245,7 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
       this.filterIndex.add(id, field, rawFieldValue);
     }
 
-    const meta: DocMeta = { id, fieldLengths, doc };
+    const meta: DocMeta = { id, fieldLengths, doc: this.config.storeDocuments !== false ? doc as AnyDocument : null };
     this.docs.add(meta);
     this.scorer.invalidateIdfCache();
     this.lastUpdated = new Date();
@@ -333,7 +334,7 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
         this.filterIndex.add(id, field, rawFieldValue);
       }
 
-      allMetas.push({ id, fieldLengths, doc });
+      allMetas.push({ id, fieldLengths, doc: this.config.storeDocuments !== false ? doc as AnyDocument : null });
     }
 
     // Phase 3: Batch-insert suggestions
@@ -462,7 +463,7 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
       if (filterDocIds) {
         filteredDocs = [];
         for (const meta of this.docs.getAll()) {
-          if (filterDocIds.has(meta.id)) {
+          if (filterDocIds.has(meta.id) && meta.doc) {
             filteredDocs.push(meta.doc as T);
           }
         }
@@ -552,12 +553,15 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
 
     // Filter
     if (filter) {
-      docs = docs.filter((meta) => evaluateFilter(meta.doc, filter));
+      docs = docs.filter((meta) => {
+        if (meta.doc) return evaluateFilter(meta.doc, filter);
+        return this._evaluateFilterWithIndex(filter)?.has(meta.id) ?? true;
+      });
     }
 
     // Sort using sortDocuments
     if (sort) {
-      const docMap = new Map<AnyDocument, DocMeta>();
+      const docMap = new Map<AnyDocument | null, DocMeta>();
       for (const meta of docs) {
         docMap.set(meta.doc, meta);
       }
@@ -610,7 +614,7 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
    */
   export(): { documents: AnyDocument[]; config: Record<string, unknown> } {
     return {
-      documents: this.docs.getAllDocs<T>(),
+      documents: this.config.storeDocuments !== false ? this.docs.getAllDocs<T>() : [],
       config: {
         idField: this.config.idField,
         fields: this.config.fields,
@@ -693,9 +697,13 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
     // Fall back to full document scan
     const ids = new Set<string>();
     for (const meta of this.docs.getAll()) {
-      if (evaluateFilter(meta.doc, filter)) {
-        ids.add(meta.id);
+      if (meta.doc) {
+        if (evaluateFilter(meta.doc, filter)) {
+          ids.add(meta.id);
+        }
       }
+      // When docs aren't stored, the filter index path should handle all cases,
+      // so this fallback should only be reached when storeDocuments is true.
     }
     return ids;
   }
@@ -764,9 +772,26 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
     // Only use filter index for configured fields; fall back to scan otherwise
     if (!(field in this.fields)) return null;
 
+    const supportedDirect = ["eq", "in", "gt", "gte", "lt", "lte", "range", "exists"];
+    const supportedWithDoc = ["neq", "nin", "contains", "startsWith"];
+
+    // When docs aren't stored, we can still evaluate neq/nin/contains/startsWith
+    // using filter index field values
+    const canUseFilterIndex = supportedDirect.includes(operator) ||
+      (this.config.storeDocuments !== false || supportedWithDoc.includes(operator));
+
+    if (!canUseFilterIndex) return null;
+
     switch (operator as FilterOperator) {
       case "eq":
         return this.filterIndex.getEq(field, value) ?? new Set();
+
+      case "neq": {
+        const matching = this.filterIndex.getEq(field, value);
+        if (!matching) return this.filterIndex.getAllDocIds();
+        const all = this.filterIndex.getAllDocIds();
+        return new Set([...all].filter(id => !matching.has(id)));
+      }
 
       case "in": {
         if (!Array.isArray(value) || value.length === 0) return new Set();
@@ -778,6 +803,20 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
           }
         }
         return result;
+      }
+
+      case "nin": {
+        if (!Array.isArray(value) || value.length === 0) return this.filterIndex.getAllDocIds();
+        const matching = new Set<string>();
+        for (const v of value) {
+          const matchSet = this.filterIndex.getEq(field, v);
+          if (matchSet) {
+            for (const id of matchSet) matching.add(id);
+          }
+        }
+        if (matching.size === 0) return this.filterIndex.getAllDocIds();
+        const all = this.filterIndex.getAllDocIds();
+        return new Set([...all].filter(id => !matching.has(id)));
       }
 
       case "gt": {
@@ -812,6 +851,40 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
 
       case "exists":
         return this.filterIndex.getExists(field);
+
+      case "contains": {
+        if (typeof value !== "string") return null;
+        const q = value.toLowerCase();
+        const all = this.filterIndex.getAllDocIds();
+        const result = new Set<string>();
+        for (const id of all) {
+          const vals = this.filterIndex.getFieldValues(id, field);
+          for (const v of vals) {
+            if (typeof v === "string" && v.toLowerCase().includes(q)) {
+              result.add(id);
+              break;
+            }
+          }
+        }
+        return result;
+      }
+
+      case "startsWith": {
+        if (typeof value !== "string") return null;
+        const q = value.toLowerCase();
+        const all = this.filterIndex.getAllDocIds();
+        const result = new Set<string>();
+        for (const id of all) {
+          const vals = this.filterIndex.getFieldValues(id, field);
+          for (const v of vals) {
+            if (typeof v === "string" && v.toLowerCase().startsWith(q)) {
+              result.add(id);
+              break;
+            }
+          }
+        }
+        return result;
+      }
 
       default:
         return null;
@@ -920,13 +993,13 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
 
     if (sort) {
       // When sort is provided, relevance ordering is traded for field ordering
-      const docMap = new Map<AnyDocument, { id: string; score: number; raw: number }>();
+      const docMap = new Map<AnyDocument | null, { id: string; score: number; raw: number }>();
       const docs: T[] = [];
       for (const c of candidates) {
         const meta = this.docs.get(c.id);
         if (meta) {
           docMap.set(meta.doc, c);
-          docs.push(meta.doc as T);
+          if (meta.doc) docs.push(meta.doc as T);
         }
       }
       const sortedDocs = sortDocuments(docs, sort);
@@ -1008,11 +1081,13 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
       const matchedTokens = [...(docMatchedTokens.get(id) ?? [])];
       const matchType = docMatchTypes.get(id) ?? "fuzzy";
 
+      const doc = meta.doc as T | null;
+
       let highlights;
-      if (doHighlight) {
+      if (doHighlight && doc) {
         highlights = targetFields
           .map((field) => {
-            const val = getFieldValue(meta.doc, field, this.fields[field]?.path);
+            const val = getFieldValue(doc as AnyDocument, field, this.fields[field]?.path);
             if (!val) return null;
             return highlight(val, matchedTokens, field);
           })
@@ -1020,7 +1095,7 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
       }
 
       hits.push({
-        document: meta.doc as T,
+        document: doc,
         score,
         rawScore: raw,
         matchType,

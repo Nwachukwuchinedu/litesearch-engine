@@ -11,6 +11,12 @@ export class DocumentStore {
   /** Per-field average lengths (used by BM25) */
   private fieldTotals: Map<string, number> = new Map();
 
+  private storeDocuments: boolean;
+
+  constructor(storeDocuments: boolean = true) {
+    this.storeDocuments = storeDocuments;
+  }
+
   add(meta: DocMeta): void {
     // If already exists, subtract old field lengths first
     const existing = this.store.get(meta.id);
@@ -71,6 +77,7 @@ export class DocumentStore {
   }
 
   getAllDocs<T extends AnyDocument>(): T[] {
+    if (!this.storeDocuments) return [];
     return [...this.store.values()].map((m) => m.doc as T);
   }
 
@@ -90,7 +97,9 @@ export class DocumentStore {
   estimateMemory(): number {
     let bytes = 0;
     for (const meta of this.store.values()) {
-      bytes += JSON.stringify(meta.doc).length * 2; // UTF-16
+      if (this.storeDocuments && meta.doc) {
+        bytes += JSON.stringify(meta.doc).length * 2; // UTF-16
+      }
       bytes += 200; // metadata overhead
     }
     return bytes;

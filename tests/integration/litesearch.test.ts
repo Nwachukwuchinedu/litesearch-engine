@@ -575,4 +575,111 @@ describe("LiteSearch (integration)", () => {
       expect(result.hits.length).toBe(1);
     });
   });
+
+  describe("storeDocuments = false", () => {
+    function createNoDocEngine() {
+      return new LiteSearch<TestDoc>({
+        idField: "id",
+        fields: {
+          title: { weight: 3, suggest: true },
+          description: { weight: 1 },
+          category: { weight: 2, suggest: true },
+        },
+        fuzzy: { enabled: true, maxDistance: 2, minLength: 4 },
+        storeDocuments: false,
+      });
+    }
+
+    it("search returns results with document: null", () => {
+      const engine = createNoDocEngine();
+      engine.add({ id: "1", title: "Running Shoes", description: "Comfortable running shoes", category: "Footwear", price: 7500 });
+      engine.add({ id: "2", title: "Basketball Sneakers", description: "High-top shoes", category: "Footwear", price: 12000 });
+
+      const result = engine.search("shoes");
+      expect(result.hits.length).toBeGreaterThanOrEqual(1);
+      expect(result.hits[0].document).toBeNull();
+    });
+
+    it("suggest still works when docs not stored", () => {
+      const engine = createNoDocEngine();
+      engine.add({ id: "1", title: "Running Shoes", description: "test", category: "Footwear", price: 7500 });
+      engine.add({ id: "2", title: "Running Shorts", description: "test", category: "Clothing", price: 3000 });
+
+      const result = engine.suggest("run");
+      expect(result.suggestions.length).toBeGreaterThanOrEqual(1);
+      const texts = result.suggestions.map((s) => s.text);
+      expect(texts).toContain("running");
+    });
+
+    it("filter via index still works when docs not stored", () => {
+      const engine = createNoDocEngine();
+      engine.add({ id: "1", title: "Running Shoes", description: "Comfortable", category: "Footwear", price: 7500 });
+      engine.add({ id: "2", title: "T-Shirt", description: "Cotton fabric", category: "Clothing", price: 1500 });
+
+      const result = engine.search("shoes", {
+        filter: { field: "category", operator: "eq", value: "Footwear" },
+      });
+      expect(result.hits.length).toBe(1);
+    });
+
+    it("browse returns hits with document: null", () => {
+      const engine = createNoDocEngine();
+      engine.add({ id: "1", title: "Running Shoes", description: "test", category: "Footwear", price: 7500 });
+      engine.add({ id: "2", title: "Yoga Mat", description: "test", category: "Fitness", price: 2500 });
+
+      const result = engine.browse();
+      expect(result.hits.length).toBe(2);
+      expect(result.hits[0].document).toBeNull();
+    });
+
+    it("export returns empty documents array", () => {
+      const engine = createNoDocEngine();
+      engine.add({ id: "1", title: "Running Shoes", description: "test", category: "Footwear", price: 7500 });
+
+      const exported = engine.export();
+      expect(exported.documents).toEqual([]);
+    });
+
+    it("memory estimate is lower when docs not stored", () => {
+      const docs: TestDoc[] = [
+        { id: "1", title: "Running Shoes", description: "A long description here...", category: "Footwear", price: 7500 },
+        { id: "2", title: "Yoga Mat", description: "Another long description...", category: "Fitness", price: 2500 },
+      ];
+
+      const withDocs = createEngine();
+      withDocs.addMany(docs);
+      const memWith = withDocs.stats().memoryEstimateBytes;
+
+      const withoutDocs = createNoDocEngine();
+      withoutDocs.addMany(docs);
+      const memWithout = withoutDocs.stats().memoryEstimateBytes;
+
+      expect(memWithout).toBeLessThan(memWith);
+    });
+
+    it("getById returns null when docs not stored", () => {
+      const engine = createNoDocEngine();
+      engine.add({ id: "1", title: "Running Shoes", description: "test", category: "Footwear", price: 7500 });
+
+      const doc = engine.getById("1");
+      expect(doc).toBeNull();
+    });
+
+    it("has() still works when docs not stored", () => {
+      const engine = createNoDocEngine();
+      engine.add({ id: "1", title: "Running Shoes", description: "test", category: "Footwear", price: 7500 });
+
+      expect(engine.has("1")).toBe(true);
+      expect(engine.has("nonexistent")).toBe(false);
+    });
+
+    it("stats still works when docs not stored", () => {
+      const engine = createNoDocEngine();
+      engine.add({ id: "1", title: "Running Shoes", description: "test", category: "Footwear", price: 7500 });
+
+      const stats = engine.stats();
+      expect(stats.documentCount).toBe(1);
+      expect(stats.termCount).toBeGreaterThan(0);
+    });
+  });
 });

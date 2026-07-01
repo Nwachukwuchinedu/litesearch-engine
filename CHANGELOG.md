@@ -8,6 +8,9 @@
 - IDF caching in BM25 scorer with lazy invalidation
 - Configurable input size limits: `maxQueryLength` (512), `maxTokenCount` (128), `maxDocumentSize` (1MB), `maxFieldValueSize` (10K)
 - LRU query cache with configurable TTL (default: 30s) and max entries (default: 1000)
+- BK-tree for O(log n) fuzzy term matching (replaces O(n) term set scan)
+- PrefixTrie for O(k) prefix lookups (replaces O(n) term scan)
+- FilterIndex for O(1) equality and range filter evaluation (replaces O(n) doc scan)
 
 ### Changed
 - **Highlighter:** Replaced per-token regex loop with a single combined alternation regex for O(1) regex passes
