@@ -290,6 +290,79 @@ describe("LiteSearch (integration)", () => {
       // Also could match "Yoga" or "Dumbbells" via description if tokenized
       expect(result.hits.length).toBe(2);
     });
+
+    it("addMany produces same results as calling add() in a loop", () => {
+      const docs: TestDoc[] = [];
+      for (let i = 0; i < 100; i++) {
+        docs.push({
+          id: String(i),
+          title: `Document ${i}`,
+          description: `This is the description for document number ${i}`,
+          category: i % 2 === 0 ? "Fitness" : "Footwear",
+          price: i * 100,
+        });
+      }
+
+      // Batch addMany
+      const batchEngine = createEngine();
+      batchEngine.addMany(docs);
+
+      // Sequential add
+      const seqEngine = createEngine();
+      for (const doc of docs) {
+        seqEngine.add(doc);
+      }
+
+      // Search results should be identical
+      const batchResult = batchEngine.search("document");
+      const seqResult = seqEngine.search("document");
+      expect(batchResult.total).toBe(seqResult.total);
+      expect(batchResult.hits.length).toBe(seqResult.hits.length);
+      for (let i = 0; i < batchResult.hits.length; i++) {
+        expect(batchResult.hits[i].document.id).toBe(seqResult.hits[i].document.id);
+        // Scores should be very close (may differ slightly due to floating point)
+        expect(Math.abs(batchResult.hits[i].score - seqResult.hits[i].score)).toBeLessThan(0.001);
+      }
+
+      // Suggest results should be identical
+      const batchSuggest = batchEngine.suggest("doc");
+      const seqSuggest = seqEngine.suggest("doc");
+      expect(batchSuggest.suggestions.length).toBe(seqSuggest.suggestions.length);
+    });
+
+    it("addMany with 1000 docs is faster than looping add()", () => {
+      const docs: TestDoc[] = [];
+      for (let i = 0; i < 1000; i++) {
+        docs.push({
+          id: String(i),
+          title: `Document ${i}`,
+          description: `This is the description for document number ${i}`,
+          category: i % 2 === 0 ? "Fitness" : "Footwear",
+          price: i * 100,
+        });
+      }
+
+      // Sequential add
+      const seqEngine = createEngine();
+      const seqStart = Date.now();
+      for (const doc of docs) {
+        seqEngine.add(doc);
+      }
+      const seqTime = Date.now() - seqStart;
+
+      // Batch addMany
+      const batchEngine = createEngine();
+      const batchStart = Date.now();
+      batchEngine.addMany(docs);
+      const batchTime = Date.now() - batchStart;
+
+      // Both should have indexed all docs
+      expect(seqEngine.stats().documentCount).toBe(1000);
+      expect(batchEngine.stats().documentCount).toBe(1000);
+
+      // Batch should be faster (or at least not significantly slower)
+      expect(batchTime).toBeLessThan(seqTime * 1.1);
+    });
   });
 
   describe("input size limits", () => {

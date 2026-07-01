@@ -27,6 +27,21 @@ export class DocumentStore {
     }
   }
 
+  addMany(metas: DocMeta[]): void {
+    for (const meta of metas) {
+      const existing = this.store.get(meta.id);
+      if (existing) {
+        for (const [field, len] of Object.entries(existing.fieldLengths)) {
+          this.fieldTotals.set(field, (this.fieldTotals.get(field) ?? 0) - len);
+        }
+      }
+      this.store.set(meta.id, meta);
+      for (const [field, len] of Object.entries(meta.fieldLengths)) {
+        this.fieldTotals.set(field, (this.fieldTotals.get(field) ?? 0) + len);
+      }
+    }
+  }
+
   remove(docId: string): boolean {
     const existing = this.store.get(docId);
     if (!existing) return false;

@@ -223,10 +223,93 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
    * More efficient than calling add() in a loop for large datasets.
    */
   addMany(documents: T[]): void {
-    const emptyCounts = new Map<string, number>();
+    // Phase 1: Resolve IDs, validate, remove existing docs (without cache invalidation)
+    const docs: Array<{ id: string; doc: T }> = [];
     for (const doc of documents) {
-      this.add(doc, emptyCounts);
+      let id: string;
+      if (this.idResolver) {
+        id = this.idResolver(doc);
+      } else {
+        id = getFieldValue(doc, '', this.config.idField as string);
+      }
+      if (!id || id.trim() === '') {
+        const keys = Object.keys(doc);
+        throw new Error(
+          `Document missing valid idField: "${this.config.idField}". Available keys: [${keys.join(', ')}]`
+        );
+      }
+      if (this.docs.has(id)) {
+        this.docs.remove(id);
+        this.index.removeDoc(id);
+        this.suggester.removeDoc(id);
+      }
+      docs.push({ id, doc });
     }
+
+    // Phase 2: Tokenize all docs, collect batch data
+    const allMetas: DocMeta[] = [];
+    const allSuggestions: Array<{ token: string; docId: string }> = [];
+    const emptyCounts = new Map<string, number>();
+
+    for (const { id, doc } of docs) {
+      // Enforce max document size
+      let docStr = "";
+      try { docStr = JSON.stringify(doc); } catch { /* skip size check */ }
+      if (docStr.length > this.config.limits.maxDocumentSize!) {
+        throw new Error(
+          `Document size (${docStr.length} bytes) exceeds max of ${this.config.limits.maxDocumentSize!} bytes`
+        );
+      }
+
+      const fieldLengths: Record<string, number> = {};
+
+      for (const [field, fieldCfg] of Object.entries(this.fields)) {
+        let rawValue = fieldCfg.extract
+          ? fieldCfg.extract(doc)
+          : getFieldValue(doc, field, fieldCfg.path);
+
+        if (rawValue.length > this.config.limits.maxFieldValueSize!) {
+          rawValue = rawValue.slice(0, this.config.limits.maxFieldValueSize!);
+        }
+
+        if (!rawValue) {
+          emptyCounts.set(field, (emptyCounts.get(field) ?? 0) + 1);
+          continue;
+        }
+
+        const tokens = this.tokenize(rawValue);
+        fieldLengths[field] = tokens.length;
+
+        tokens.forEach((token, position) => {
+          this.index.addPosting(field, token, id, position);
+        });
+
+        if (fieldCfg.suggest !== false) {
+          const unique = [...new Set(tokens)];
+          for (const token of unique) {
+            if (token.length >= 2) {
+              allSuggestions.push({ token, docId: id });
+            }
+          }
+        }
+      }
+
+      allMetas.push({ id, fieldLengths, doc });
+    }
+
+    // Phase 3: Batch-insert suggestions
+    for (const { token, docId } of allSuggestions) {
+      this.suggester.insert(token, docId);
+    }
+
+    // Phase 4: Batch-add to document store
+    this.docs.addMany(allMetas);
+
+    // Phase 5: Single IDF cache invalidation
+    this.scorer.invalidateIdfCache();
+    this.lastUpdated = new Date();
+
+    // Phase 6: Empty field warnings
     for (const [field, count] of emptyCounts) {
       if (count === documents.length) {
         console.warn(
