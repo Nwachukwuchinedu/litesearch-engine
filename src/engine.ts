@@ -29,7 +29,7 @@ import { DocumentStore } from "./indexing/document-store";
 import { SuggestionEngine } from "./suggest/suggestion-engine";
 import { evaluateFilter } from "./filters/filter-engine";
 import { highlight } from "./search/highlighter";
-import { sortDocuments } from "./search/sorter";
+import { sortDocuments, topKDocuments } from "./search/sorter";
 import { computeFacets } from "./search/facets";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -194,6 +194,7 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
 
     const meta: DocMeta = { id, fieldLengths, doc };
     this.docs.add(meta);
+    this.scorer.invalidateIdfCache();
     this.lastUpdated = new Date();
   }
 
@@ -223,6 +224,7 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
     if (removed) {
       this.index.removeDoc(id);
       this.suggester.removeDoc(id);
+      this.scorer.invalidateIdfCache();
       this.lastUpdated = new Date();
     }
     return removed;
@@ -242,6 +244,7 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
     this.index.clear();
     this.docs.clear();
     this.suggester.clear();
+    this.scorer.invalidateIdfCache();
     this.lastUpdated = null;
   }
 
@@ -541,6 +544,7 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
 
         for (const { postings, matchType } of matches) {
           const termScores = this.scorer.scoreField(
+            token,
             postings,
             this.docs.getMetaMap(),
             field,
@@ -613,6 +617,8 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
       candidates.push({ id, score, raw: rawScores.get(id)! });
     }
 
+    const total = candidates.length;
+
     if (sort) {
       // When sort is provided, relevance ordering is traded for field ordering
       const docMap = new Map<AnyDocument, { id: string; score: number; raw: number }>();
@@ -631,10 +637,57 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
         if (entry) candidates.push(entry);
       }
     } else {
-      candidates.sort((a, b) => b.score - a.score);
+      const k = limit + offset;
+      if (k > 0 && k < candidates.length) {
+        // Bounded min-heap: keep top-k by score
+        const heap: Array<{ id: string; score: number; raw: number }> = [];
+        function heapCmp(a: typeof candidates[0], b: typeof candidates[0]): number {
+          return a.score - b.score || a.id.localeCompare(b.id);
+        }
+        function heapPush(item: typeof candidates[0]): void {
+          heap.push(item);
+          let idx = heap.length - 1;
+          while (idx > 0) {
+            const parent = (idx - 1) >> 1;
+            if (heapCmp(heap[idx], heap[parent]) >= 0) break;
+            [heap[idx], heap[parent]] = [heap[parent], heap[idx]];
+            idx = parent;
+          }
+        }
+        function heapPop(): typeof candidates[0] {
+          const top = heap[0];
+          const last = heap.pop()!;
+          if (heap.length > 0) {
+            heap[0] = last;
+            let idx = 0;
+            const size = heap.length;
+            while (true) {
+              let smallest = idx;
+              const left = (idx << 1) + 1;
+              const right = (idx << 1) + 2;
+              if (left < size && heapCmp(heap[left], heap[smallest]) < 0) smallest = left;
+              if (right < size && heapCmp(heap[right], heap[smallest]) < 0) smallest = right;
+              if (smallest === idx) break;
+              [heap[idx], heap[smallest]] = [heap[smallest], heap[idx]];
+              idx = smallest;
+            }
+          }
+          return top;
+        }
+        for (const c of candidates) {
+          heapPush(c);
+          if (heap.length > k) heapPop();
+        }
+        candidates.length = 0;
+        while (heap.length > 0) {
+          candidates.push(heapPop());
+        }
+        candidates.reverse();
+      } else {
+        candidates.sort((a, b) => b.score - a.score);
+      }
     }
 
-    const total = candidates.length;
     const paginated = candidates.slice(offset, offset + limit);
 
     return { paginated, total };

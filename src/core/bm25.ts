@@ -20,10 +20,29 @@ export const DEFAULT_BM25: BM25Config = { k1: 1.2, b: 0.75 };
 export class BM25Scorer {
   private k1: number;
   private b: number;
+  private idfCache: Map<string, number>;
 
   constructor(config: Partial<BM25Config> = {}) {
     this.k1 = config.k1 ?? DEFAULT_BM25.k1;
     this.b  = config.b  ?? DEFAULT_BM25.b;
+    this.idfCache = new Map();
+  }
+
+  /**
+   * Precompute and cache the IDF value for a term.
+   */
+  cacheIdf(term: string, postings: Postings, N: number): void {
+    if (N <= 0) return;
+    const df = postings.size;
+    const key = `${term}:${N}`;
+    this.idfCache.set(key, Math.log((N - df + 0.5) / (df + 0.5) + 1));
+  }
+
+  /**
+   * Clear the IDF cache. Called when documents are added or removed.
+   */
+  invalidateIdfCache(): void {
+    this.idfCache.clear();
   }
 
   /**
@@ -38,6 +57,7 @@ export class BM25Scorer {
    * @param weight       Field weight multiplier
    */
   scoreField(
+    term: string,
     postings: Postings,
     docMetas: ReadonlyMap<string, DocMeta>,
     field: string,
@@ -46,12 +66,17 @@ export class BM25Scorer {
     weight: number
   ): Map<string, number> {
     const scores = new Map<string, number>();
-    const df = postings.size; // document frequency
+    const df = postings.size;
 
     if (df === 0) return scores;
 
-    // IDF component: log((N - df + 0.5) / (df + 0.5) + 1)
-    const idf = Math.log((N - df + 0.5) / (df + 0.5) + 1);
+    // IDF component: check cache first
+    const cacheKey = `${term}:${N}`;
+    let idf = this.idfCache.get(cacheKey);
+    if (idf === undefined) {
+      idf = Math.log((N - df + 0.5) / (df + 0.5) + 1);
+      this.idfCache.set(cacheKey, idf);
+    }
 
     for (const [docId, positions] of postings) {
       const meta = docMetas.get(docId);

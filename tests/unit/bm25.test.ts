@@ -33,7 +33,7 @@ describe("BM25Scorer", () => {
         ],
       ]);
 
-      const scores = scorer.scoreField(postings, docMetas, "title", 40, 10, 1.0);
+      const scores = scorer.scoreField("test", postings, docMetas, "title", 40, 10, 1.0);
 
       // BM25+ formula for doc1:
       // idf = log((10 - 2 + 0.5) / (2 + 0.5) + 1) = log(8.5/2.5 + 1) = log(3.4 + 1) = log(4.4) ≈ 1.4816
@@ -54,7 +54,7 @@ describe("BM25Scorer", () => {
       const scorer = new BM25Scorer();
       const postings: Postings = new Map();
       const docMetas = new Map<string, DocMeta>();
-      const scores = scorer.scoreField(postings, docMetas, "title", 40, 100, 1.0);
+      const scores = scorer.scoreField("empty", postings, docMetas, "title", 40, 100, 1.0);
       expect(scores.size).toBe(0);
     });
   });
@@ -131,6 +131,55 @@ describe("BM25Scorer", () => {
 
       BM25Scorer.mergeScores([field1], target);
       expect(target.get("doc1")).toBe(15);
+    });
+  });
+
+  describe("IDF cache", () => {
+    it("returns the same score for same term+N (uses cache)", () => {
+      const scorer = new BM25Scorer();
+      const postings: Postings = new Map([["doc1", [0]]]);
+      const docMetas = new Map<string, DocMeta>([
+        ["doc1", { id: "doc1", fieldLengths: { title: 10 }, doc: { id: "doc1" } }],
+      ]);
+
+      const r1 = scorer.scoreField("hello", postings, docMetas, "title", 10, 5, 1.0);
+      const r2 = scorer.scoreField("hello", postings, docMetas, "title", 10, 5, 1.0);
+      expect(r1.get("doc1")).toBe(r2.get("doc1"));
+    });
+
+    it("computes new IDF after invalidateIdfCache", () => {
+      const scorer = new BM25Scorer();
+      const postings1: Postings = new Map([["doc1", [0]]]);
+      const docMetas1 = new Map<string, DocMeta>([
+        ["doc1", { id: "doc1", fieldLengths: { title: 10 }, doc: { id: "doc1" } }],
+      ]);
+
+      const r1 = scorer.scoreField("test", postings1, docMetas1, "title", 10, 5, 1.0);
+
+      scorer.invalidateIdfCache();
+
+      const postings2: Postings = new Map([["doc1", [0]], ["doc2", [0]]]);
+      const docMetas2 = new Map<string, DocMeta>([
+        ["doc1", { id: "doc1", fieldLengths: { title: 10 }, doc: { id: "doc1" } }],
+        ["doc2", { id: "doc2", fieldLengths: { title: 10 }, doc: { id: "doc2" } }],
+      ]);
+
+      const r2 = scorer.scoreField("test", postings2, docMetas2, "title", 10, 10, 1.0);
+      expect(r2.get("doc1")).not.toBe(r1.get("doc1"));
+    });
+
+    it("cacheIdf precomputes and stores IDF", () => {
+      const scorer = new BM25Scorer();
+      const postings: Postings = new Map([["doc1", [0]]]);
+
+      scorer.cacheIdf("cached", postings, 5);
+
+      const docMetas = new Map<string, DocMeta>([
+        ["doc1", { id: "doc1", fieldLengths: { title: 10 }, doc: { id: "doc1" } }],
+      ]);
+
+      const scores = scorer.scoreField("cached", postings, docMetas, "title", 10, 5, 1.0);
+      expect(scores.get("doc1")).toBeGreaterThan(0);
     });
   });
 });
