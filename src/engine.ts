@@ -14,6 +14,7 @@ import type {
   DocMeta,
   FilterClause,
   FilterGroup,
+  FilterOperator,
   BrowseOptions,
   BrowseHit,
   BrowseResult,
@@ -142,6 +143,12 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
         maxDocumentSize: 1000000,
         maxFieldValueSize: 10000,
         ...config.limits,
+      },
+      cache: {
+        enabled: false,
+        maxEntries: 1000,
+        ttlMs: 30000,
+        ...config.cache,
       },
     };
 
@@ -742,7 +749,9 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
         if (result === null) {
           result = new Set(sub);
         } else {
-          result = new Set([...result].filter(id => sub.has(id)));
+          const intersection = new Set<string>();
+          for (const id of result) { if (sub!.has(id)) intersection.add(id); }
+          result = intersection;
         }
       }
       return result ?? new Set();

@@ -70,7 +70,7 @@ async function main() {
 
   // ── Express ─────────────────────────────────────────────────────────────
   const app = express();
-  app.use(express.static(join(__dirname, "public")));
+  app.use(express.static(join(__dirname, "dist")));
 
   app.get("/api/search", (req, res) => {
     const q = (req.query.q || "").trim();
@@ -87,7 +87,29 @@ async function main() {
 
     try {
       if (index === "all") {
-        res.json(manager.searchAll(q, { ...opts, indexes: ["users", "products", "articles"] }));
+        if (!q) {
+          // Browse all indexes and merge
+          const allHits = [];
+          let total = 0;
+          for (const name of ["users", "products", "articles"]) {
+            const result = manager.browse(name, { limit: Number.MAX_SAFE_INTEGER, offset: 0 });
+            for (const hit of result.hits) {
+              allHits.push({ ...hit, document: { ...hit.document, _index: name } });
+            }
+            total += result.total;
+          }
+          allHits.sort((a, b) => b.score - a.score);
+          const paginated = allHits.slice(offset, offset + limit);
+          res.json({
+            hits: paginated,
+            total,
+            took: 0,
+            query: q,
+            pagination: { limit, offset, hasMore: offset + limit < total },
+          });
+        } else {
+          res.json(manager.searchAll(q, { ...opts, indexes: ["users", "products", "articles"] }));
+        }
       } else {
         if (!q) res.json(manager.browse(index, opts));
         else res.json(manager.search(index, q, opts));

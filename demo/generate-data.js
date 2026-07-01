@@ -1,73 +1,110 @@
 import { MongoClient } from "mongodb";
+import { faker } from "@faker-js/faker";
 
 const MONGO_URI = process.env.DATABASE_URL ||
   "mongodb://chinedusimeon2020_db_user:fOcCesg7dqCzMr4O@ac-9sedajb-shard-00-00.eadicdq.mongodb.net:27017,ac-9sedajb-shard-00-01.eadicdq.mongodb.net:27017,ac-9sedajb-shard-00-02.eadicdq.mongodb.net:27017/search-engine?ssl=true&replicaSet=atlas-to1hqi-shard-0&authSource=admin&appName=search-engine";
 
-const firstNames = [
-  "Chiamaka", "Kofi", "Aisha", "Amara", "Zanele", "Kwame", "Ngozi", "Tendai",
-  "Folake", "Oluwaseun", "Mensah", "Akua", "Chidi", "Nyasha", "Sefu", "Imani",
-  "Jamal", "Zahara", "Obinna", "Adwoa", "Fatima", "Musa", "Nkechi", "Kwesi",
-  "Zuri", "Babatunde", "Chinwe", "Kwaku", "Ifeanyi", "Amina",
-];
-
-const lastNames = [
-  "Obi", "Mensah", "Bello", "Okafor", "Nkosi", "Asante", "Eze", "Moyo",
-  "Adeyemi", "Ogunlesi", "Sarpong", "Boateng", "Okonkwo", "Mbedzi", "Kamara",
-  "Abara", "Diop", "Nwachukwu", "Tshabalala", "Quansah", "Adegoke", "Keita",
-  "Nwosu", "Agyapong", "Osei", "Balogun", "Okeke", "Acquah", "Nnamani", "Sesay",
-];
-
-const departments = [
-  "Engineering", "Design", "Marketing", "Sales", "Product", "Data Science",
-  "Security", "Support", "Legal", "Finance", "HR", "Operations",
-];
-
-const skills = [
-  "JavaScript", "TypeScript", "Python", "React", "Vue.js", "Node.js", "Rust",
-  "Go", "SQL", "MongoDB", "Docker", "Kubernetes", "AWS", "Figma", "UI Design",
-  "UX Research", "Content Strategy", "SEO", "Data Analysis", "Machine Learning",
-  "DevOps", "Terraform", "GraphQL", "Redis", "PostgreSQL",
-];
-
-const productNames = [
-  "Wireframe Kit", "Icon Bundle", "UI Component Library", "Dashboard Template",
-  "Landing Page Pack", "Email Template Set", "Design System Pro",
-  "Analytics Dashboard", "Chat Widget", "Form Builder Pro",
-];
-
-const categories = [
-  "Software", "Design Assets", "Templates", "Components", "Tools",
-];
-
-const brands = [
-  "Acme Corp", "TechFlow", "DesignLab", "CodeCraft", "PixelPerfect",
-  "DataVault", "CloudNine", "StreamLine", "NexGen", "BaseLayer",
-];
-
-const articleTopics = [
-  "Getting Started with TypeScript", "Design Systems at Scale", "Understanding BM25 Scoring",
-  "Building Search Interfaces", "Zero-Dependency Libraries", "Full-Text Search Best Practices",
-  "Performance Optimization Tips", "Modern Frontend Architecture", "API Design Patterns",
-  "Database Indexing Strategies", "State Management in React", "CSS Grid Deep Dive",
-  "Node.js Streams Explained", "Authentication Patterns", "Microservices vs Monolith",
-  "Search Relevance Tuning", "Accessibility in Web Apps", "Testing Strategies",
-  "CI/CD Pipeline Setup", "Web Performance Metrics",
-];
-
-function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
-function pickN(arr, n) { return [...arr].sort(() => Math.random() - 0.5).slice(0, n); }
-function randInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
-function sentence(words) {
-  return Array.from({ length: randInt(5, 20) }, () => pick(words)).join(" ");
-}
+faker.seed(42);
 
 const BATCH = 500;
+const TOTAL = 100_000;
+
+const USERS_COUNT = Math.round(TOTAL * 0.4);   // 40,000
+const PRODUCTS_COUNT = Math.round(TOTAL * 0.35); // 35,000
+const ARTICLES_COUNT = TOTAL - USERS_COUNT - PRODUCTS_COUNT; // 25,000
+
+const DEPARTMENTS = [
+  "Engineering", "Design", "Marketing", "Sales", "Product",
+  "Data Science", "Security", "Support", "Legal", "Finance", "HR", "Operations",
+];
+
+const CATEGORIES = [
+  "Software", "Design Assets", "Templates", "Components", "Tools",
+  "API", "SaaS", "Mobile App", "Plugin", "Theme",
+];
+
+const ALLOWED_DOMAINS = ["gmail.com", "yahoo.com", "outlook.com", "proton.me", "icloud.com"];
+
+function generateUser(i) {
+  const firstName = faker.person.firstName();
+  const lastName = faker.person.lastName();
+  const domain = faker.helpers.arrayElement(ALLOWED_DOMAINS);
+  const skillCount = faker.number.int({ min: 1, max: 8 });
+  const bioLen = faker.number.int({ min: 10, max: 50 });
+
+  return {
+    id: `user_${i + 1}`,
+    type: "user",
+    name: `${firstName} ${lastName}`,
+    email: `${firstName.toLowerCase()}.${lastName.toLowerCase()}.${i}@${domain}`,
+    department: faker.helpers.arrayElement(DEPARTMENTS),
+    skills: faker.helpers.multiple(() => faker.person.jobArea(), { count: skillCount }),
+    bio: faker.lorem.sentences(bioLen),
+    joinDate: faker.date.past({ years: 5 }).toISOString(),
+    salary: faker.number.int({ min: 30000, max: 200000 }),
+    remote: faker.datatype.boolean(),
+  };
+}
+
+function generateProduct(i) {
+  const wordCount = faker.number.int({ min: 3, max: 8 });
+  const reviewCount = faker.number.int({ min: 0, max: 500 });
+
+  return {
+    id: `prod_${i + 1}`,
+    type: "product",
+    name: faker.commerce.productName(),
+    category: faker.helpers.arrayElement(CATEGORIES),
+    brand: faker.company.name(),
+    price: faker.number.int({ min: 500, max: 500000 }),
+    description: faker.lorem.sentences(wordCount),
+    tags: faker.helpers.multiple(
+      () => faker.commerce.department(),
+      { count: faker.number.int({ min: 1, max: 6 }) }
+    ),
+    inStock: faker.datatype.boolean(0.85),
+    rating: faker.number.float({ min: 1, max: 5, fractionDigits: 1 }),
+    releaseDate: faker.date.past({ years: 3 }).toISOString(),
+    reviews: reviewCount,
+    colors: faker.helpers.multiple(
+      () => faker.color.human(),
+      { count: faker.number.int({ min: 1, max: 4 }) }
+    ),
+  };
+}
+
+function generateArticle(i) {
+  const paragraphCount = faker.number.int({ min: 2, max: 10 });
+
+  return {
+    id: `article_${i + 1}`,
+    type: "article",
+    title: faker.lorem.sentence({ min: 4, max: 12 }).replace(/\.$/, ""),
+    author: faker.person.fullName(),
+    body: faker.lorem.paragraphs(paragraphCount, "\n\n"),
+    tags: faker.helpers.multiple(
+      () => faker.book.genre(),
+      { count: faker.number.int({ min: 1, max: 5 }) }
+    ),
+    wordCount: faker.number.int({ min: 200, max: 5000 }),
+    publishedAt: faker.date.past({ years: 2 }).toISOString(),
+    readTime: faker.number.int({ min: 2, max: 25 }),
+    views: faker.number.int({ min: 0, max: 100000 }),
+    category: faker.helpers.arrayElement(["Tech", "Business", "Science", "Design", "Tutorial"]),
+  };
+}
+
+const generators = [
+  { label: "Users",    count: USERS_COUNT,    fn: generateUser },
+  { label: "Products", count: PRODUCTS_COUNT,  fn: generateProduct },
+  { label: "Articles", count: ARTICLES_COUNT,  fn: generateArticle },
+];
 
 const client = new MongoClient(MONGO_URI);
 
 try {
   await client.connect();
-  console.log("Connected to MongoDB");
+  console.log("Connected to MongoDB\n");
 
   const db = client.db();
   const collection = db.collection("documents");
@@ -75,37 +112,8 @@ try {
   await collection.deleteMany({});
   console.log("Cleared existing documents\n");
 
-  const generators = [
-    { label: "Users", count: 5000, fn: (i) => {
-      const fn = pick(firstNames), ln = pick(lastNames);
-      return { id: `user_${i + 1}`, type: "user",
-        name: `${fn} ${ln}`,
-        email: `${fn.toLowerCase()}.${ln.toLowerCase()}${i}@example.com`,
-        department: pick(departments),
-        skills: pickN(skills, randInt(1, 5)),
-        bio: sentence(skills) };
-    }},
-    { label: "Products", count: 3000, fn: (i) => {
-      const base = pick(productNames);
-      return { id: `prod_${i + 1}`, type: "product",
-        name: `${base} v${randInt(1, 5)}`,
-        category: pick(categories), brand: pick(brands),
-        price: randInt(1000, 500000),
-        description: sentence([...productNames, ...categories, "design", "code", "build", "ship", "scale"]),
-        tags: pickN([...categories, ...productNames], randInt(1, 4)) };
-    }},
-    { label: "Articles", count: 2000, fn: (i) => {
-      const topic = pick(articleTopics);
-      return { id: `article_${i + 1}`, type: "article",
-        title: topic, author: `${pick(firstNames)} ${pick(lastNames)}`,
-        body: sentence([...articleTopics, "search", "index", "query", "token", "score", "rank", "filter", "facet", "sort"]),
-        tags: pickN([...articleTopics, ...skills], randInt(1, 4)),
-        wordCount: randInt(200, 3000) };
-    }},
-  ];
-
   for (const { label, count, fn } of generators) {
-    process.stdout.write(`${label} (${count})`);
+    process.stdout.write(`${label} (${count.toLocaleString()})`);
     let batch = [];
     for (let i = 0; i < count; i++) {
       batch.push(fn(i));
@@ -120,7 +128,7 @@ try {
   }
 
   const total = await collection.countDocuments();
-  console.log(`\nDone! ${total} documents stored in MongoDB`);
+  console.log(`\nDone! ${total.toLocaleString()} documents stored in MongoDB`);
 } finally {
   await client.close();
 }
