@@ -15,6 +15,9 @@ export class InvertedIndexStore {
   /** All unique terms per field — cached for fuzzy scan */
   private termSets: Map<string, Set<string>> = new Map();
 
+  /** Per-document term tracking: docId → field → Set<term> */
+  private docTerms: Map<string, Map<string, Set<string>>> = new Map();
+
   /**
    * Add a term-position entry for a document in a given field.
    */
@@ -37,24 +40,41 @@ export class InvertedIndexStore {
     }
     postings.get(docId)!.push(position);
     termSet.add(term);
+
+    // Track per-doc terms
+    if (!this.docTerms.has(docId)) {
+      this.docTerms.set(docId, new Map());
+    }
+    const fieldTerms = this.docTerms.get(docId)!;
+    if (!fieldTerms.has(field)) {
+      fieldTerms.set(field, new Set());
+    }
+    fieldTerms.get(field)!.add(term);
   }
 
   /**
    * Remove all postings for a given document across all fields.
    */
   removeDoc(docId: string): void {
-    for (const fieldIndex of this.indexes.values()) {
-      for (const [term, postings] of fieldIndex) {
-        postings.delete(docId);
-        if (postings.size === 0) {
-          fieldIndex.delete(term);
+    const docTermEntries = this.docTerms.get(docId);
+    if (docTermEntries) {
+      for (const [field, terms] of docTermEntries) {
+        const fieldIndex = this.indexes.get(field);
+        const termSet = this.termSets.get(field);
+        if (!fieldIndex || !termSet) continue;
+
+        for (const term of terms) {
+          const postings = fieldIndex.get(term);
+          if (postings) {
+            postings.delete(docId);
+            if (postings.size === 0) {
+              fieldIndex.delete(term);
+              termSet.delete(term);
+            }
+          }
         }
       }
-    }
-
-    // Rebuild term sets
-    for (const [field, fieldIndex] of this.indexes) {
-      this.termSets.set(field, new Set(fieldIndex.keys()));
+      this.docTerms.delete(docId);
     }
   }
 
@@ -232,5 +252,6 @@ export class InvertedIndexStore {
   clear(): void {
     this.indexes.clear();
     this.termSets.clear();
+    this.docTerms.clear();
   }
 }

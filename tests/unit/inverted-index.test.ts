@@ -173,6 +173,38 @@ describe("InvertedIndexStore", () => {
     });
   });
 
+  describe("per-doc term tracking", () => {
+    it("removeDoc still removes all postings for a document", () => {
+      const store = createStore();
+      expect(store.getExact("title", "hello")!.size).toBe(2);
+      store.removeDoc("doc1");
+      expect(store.getExact("title", "hello")!.size).toBe(1);
+      expect(store.getExact("title", "world")).toBeUndefined();
+      expect(store.getExact("body", "hello")).toBeUndefined();
+    });
+
+    it("after removeDoc, termSet no longer contains terms only used by the removed doc", () => {
+      const store = createStore();
+      // "world" in title is only used by doc1
+      expect(store.termCount("title")).toBeGreaterThanOrEqual(3);
+      store.removeDoc("doc1");
+      // "world" was only in doc1, so it should be gone from termSet
+      const allTerms = store.lookup("title", "wo", 2, false);
+      expect(allTerms.length).toBe(0);
+      expect(store.getExact("title", "world")).toBeUndefined();
+    });
+
+    it("after removeDoc, terms shared by multiple docs remain in termSet", () => {
+      const store = createStore();
+      store.removeDoc("doc1");
+      // "hello" is shared by doc1 and doc2, so it should still exist
+      const postings = store.getExact("title", "hello");
+      expect(postings).toBeDefined();
+      expect(postings!.has("doc2")).toBe(true);
+      expect(postings!.has("doc1")).toBe(false);
+    });
+  });
+
   describe("clear", () => {
     it("resets all state", () => {
       const store = createStore();

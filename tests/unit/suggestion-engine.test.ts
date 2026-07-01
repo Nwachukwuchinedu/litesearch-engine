@@ -143,4 +143,36 @@ describe("SuggestionEngine", () => {
       expect(result.suggestions).toEqual([]);
     });
   });
+
+  describe("iterative trie traversal", () => {
+    it("returns same results after iterative refactoring (no behavior change)", () => {
+      const engine = createEngine();
+      const result1 = engine.suggest("hel");
+      const texts1 = result1.suggestions.map((s) => s.text);
+      expect(texts1).toContain("hello");
+      expect(texts1).toContain("help");
+      expect(texts1).toContain("helpful");
+      expect(texts1).toContain("helicopter");
+
+      const result2 = engine.suggest("wo");
+      expect(result2.suggestions[0].text).toBe("world");
+
+      engine.insert("wonderful", "doc1");
+      const result3 = engine.suggest("wo");
+      expect(result3.suggestions.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it("handles deep words without recursion issues", () => {
+      const engine = new SuggestionEngine(10);
+      const deepWord = "a".repeat(500);
+      engine.insert(deepWord, "doc1");
+      const result = engine.suggest("a".repeat(10));
+      expect(result.suggestions.length).toBe(1);
+      expect(result.suggestions[0].text).toBe(deepWord);
+
+      engine.insert("a" + "b".repeat(499), "doc2");
+      const result2 = engine.suggest("a");
+      expect(result2.suggestions.length).toBe(2);
+    });
+  });
 });

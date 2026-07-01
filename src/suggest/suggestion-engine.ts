@@ -209,22 +209,30 @@ export class SuggestionEngine {
 
   private _collectWords(
     node: TrieNode,
-    current: string,
+    prefix: string,
     results: TrieMatch[],
     maxResults: number
   ): void {
-    if (results.length >= maxResults * 3) return;
+    const stack: { node: TrieNode; prefix: string }[] = [{ node, prefix }];
 
-    if (node.isWord && node.docIds.size > 0) {
-      results.push({
-        word: current,
-        docIds: [...node.docIds],
-        frequency: node.frequency,
-      });
-    }
+    while (stack.length > 0) {
+      const { node: current, prefix: currentPrefix } = stack.pop()!;
 
-    for (const [char, child] of node.children) {
-      this._collectWords(child, current + char, results, maxResults);
+      if (results.length >= maxResults * 3) break;
+
+      if (current.isWord && current.docIds.size > 0) {
+        results.push({
+          word: currentPrefix,
+          docIds: [...current.docIds],
+          frequency: current.frequency,
+        });
+      }
+
+      const children = [...current.children.entries()];
+      for (let i = children.length - 1; i >= 0; i--) {
+        const [char, child] = children[i];
+        stack.push({ node: child, prefix: currentPrefix + char });
+      }
     }
   }
 
