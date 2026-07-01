@@ -29,7 +29,7 @@ import { DocumentStore } from "./indexing/document-store";
 import { SuggestionEngine } from "./suggest/suggestion-engine";
 import { evaluateFilter } from "./filters/filter-engine";
 import { highlight } from "./search/highlighter";
-import { sortDocuments, topKDocuments } from "./search/sorter";
+import { sortDocuments } from "./search/sorter";
 import { computeFacets } from "./search/facets";
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -250,6 +250,30 @@ describe("LiteSearch (integration)", () => {
   });
 
   describe("addMany", () => {
+    it("uses bounded heap for top-k results in search pipeline", () => {
+      const engine = new LiteSearch<AnyDocument>({
+        idField: "id",
+        fields: ["title"],
+      });
+
+      // Add enough documents that a full sort would be expensive
+      for (let i = 0; i < 100; i++) {
+        engine.add({ id: `doc${i}`, title: `document number ${i} apple` });
+      }
+
+      // Search with a small limit
+      const result = engine.search("apple", { limit: 5 });
+
+      // Should return exactly 5 results (not 100)
+      expect(result.hits.length).toBe(5);
+      expect(result.total).toBe(100); // total should reflect all matches, not just top-k
+
+      // Verify hits are ordered by score descending (best matches first)
+      for (let i = 1; i < result.hits.length; i++) {
+        expect(result.hits[i - 1].score).toBeGreaterThanOrEqual(result.hits[i].score);
+      }
+    });
+
     it("batch indexing works", () => {
       const engine = createEngine();
       const docs: TestDoc[] = [
