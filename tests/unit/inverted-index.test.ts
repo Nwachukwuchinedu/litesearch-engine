@@ -65,6 +65,26 @@ describe("InvertedIndexStore", () => {
       const results = store.getByPrefix("unknown", "test");
       expect(results.size).toBe(0);
     });
+
+    it("uses prefix trie for search - works with many terms", () => {
+      const store = new InvertedIndexStore();
+      const words = [
+        "apple", "application", "applied", "applaud", "appreciate",
+        "banana", "band", "banner", "bank",
+        "cat", "catalog", "catch", "category",
+      ];
+      for (let i = 0; i < words.length; i++) {
+        store.addPosting("title", words[i], `doc${i}`, 0);
+      }
+      const appResults = store.getByPrefix("title", "app");
+      expect(appResults.size).toBe(5);
+      const catResults = store.getByPrefix("title", "cat");
+      expect(catResults.size).toBe(4);
+      const baResults = store.getByPrefix("title", "ba");
+      expect(baResults.size).toBe(4);
+      const noResults = store.getByPrefix("title", "zzz");
+      expect(noResults.size).toBe(0);
+    });
   });
 
   describe("getFuzzy", () => {

@@ -5,6 +5,7 @@
 import type { InvertedIndex, Postings } from "../types/index";
 import { adaptiveMaxDistance } from "../core/levenshtein";
 import { BKTree } from "./bk-tree";
+import { PrefixTrie } from "./prefix-trie";
 
 export class InvertedIndexStore {
   /**
@@ -18,6 +19,9 @@ export class InvertedIndexStore {
 
   /** BK-tree per field for O(log n) fuzzy term lookup */
   private bkTrees: Map<string, BKTree> = new Map();
+
+  /** Prefix trie per field for O(prefix length) prefix lookups */
+  private prefixTries: Map<string, PrefixTrie> = new Map();
 
   /** Per-document term tracking: docId → field → Set<term> */
   private docTerms: Map<string, Map<string, Set<string>>> = new Map();
@@ -40,6 +44,10 @@ export class InvertedIndexStore {
     if (isNewTerm) {
       fieldIndex.set(term, new Map());
       bkTree.insert(term);
+      if (!this.prefixTries.has(field)) {
+        this.prefixTries.set(field, new PrefixTrie());
+      }
+      this.prefixTries.get(field)!.insert(term);
     }
 
     const postings = fieldIndex.get(term)!;
@@ -78,6 +86,10 @@ export class InvertedIndexStore {
             if (postings.size === 0) {
               fieldIndex.delete(term);
               termSet.delete(term);
+              const trie = this.prefixTries.get(field);
+              if (trie) {
+                trie.delete(term);
+              }
             }
           }
         }
@@ -98,13 +110,16 @@ export class InvertedIndexStore {
    * Returns a merged Postings (docId → best positions).
    */
   getByPrefix(field: string, prefix: string): Map<string, { postings: Postings; term: string }[]> {
+    const trie = this.prefixTries.get(field);
     const fieldIndex = this.indexes.get(field);
-    if (!fieldIndex) return new Map();
+    if (!trie || !fieldIndex) return new Map();
 
+    const matchingTerms = trie.search(prefix);
     const results = new Map<string, { postings: Postings; term: string }[]>();
 
-    for (const [term, postings] of fieldIndex) {
-      if (term.startsWith(prefix) && postings.size > 0) {
+    for (const term of matchingTerms) {
+      const postings = fieldIndex.get(term);
+      if (postings && postings.size > 0) {
         for (const docId of postings.keys()) {
           if (!results.has(docId)) results.set(docId, []);
           results.get(docId)!.push({ postings, term });
@@ -168,10 +183,10 @@ export class InvertedIndexStore {
 
     // 2. Prefix match (for partial word search)
     if (prefixMatch && query.length >= 2) {
-      const fieldIndex = this.indexes.get(field);
-      if (fieldIndex) {
-        for (const [term, postings] of fieldIndex) {
-          if (!seen.has(term) && term.startsWith(query) && postings.size > 0) {
+      const prefixResults = this.getByPrefix(field, query);
+      for (const [, entries] of prefixResults) {
+        for (const { term, postings } of entries) {
+          if (!seen.has(term)) {
             results.push({ term, postings, matchType: "prefix" });
             seen.add(term);
           }
@@ -259,6 +274,7 @@ export class InvertedIndexStore {
     this.indexes.clear();
     this.termSets.clear();
     this.bkTrees.clear();
+    this.prefixTries.clear();
     this.docTerms.clear();
   }
 }
