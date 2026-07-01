@@ -48,17 +48,20 @@ function resolveFields<T extends AnyDocument>(
   return fields as Record<string, FieldConfig>;
 }
 
-function flattenValue(val: unknown): string {
+function flattenValue(val: unknown, visited?: Set<object>): string {
   if (val === null || val === undefined) return "";
   if (val instanceof Date) return val.toISOString();
   if (Array.isArray(val)) {
-    return val.map((v) => flattenValue(v)).filter(Boolean).join(" ");
+    return val.map((v) => flattenValue(v, visited)).filter(Boolean).join(" ");
   }
   if (typeof val === "string") return val;
   if (typeof val === "number" || typeof val === "boolean") return String(val);
   if (typeof val === "object") {
+    if (!visited) visited = new Set();
+    if (visited.has(val as object)) return "";
+    visited.add(val as object);
     return Object.values(val as Record<string, unknown>)
-      .map((v) => flattenValue(v))
+      .map((v) => flattenValue(v, visited))
       .filter(Boolean)
       .join(" ");
   }
@@ -449,6 +452,42 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
     data: { documents: AnyDocument[]; config: Record<string, unknown> },
     config: LiteSearchConfig<T>
   ): LiteSearch<T> {
+    // Validate that the provided config matches the serialized config
+    const serialized = data.config ?? {};
+    const mismatches: string[] = [];
+
+    if (serialized.idField !== undefined && serialized.idField !== config.idField) {
+      mismatches.push(`idField: "${serialized.idField}" vs "${config.idField}"`);
+    }
+
+    const serFields = serialized.fields;
+    if (serFields) {
+      const serFieldNames = Array.isArray(serFields)
+        ? (serFields as string[]).sort().join(",")
+        : Object.keys(serFields as Record<string, unknown>).sort().join(",");
+      const cfgFieldNames = Array.isArray(config.fields)
+        ? (config.fields as string[]).sort().join(",")
+        : Object.keys(config.fields as Record<string, unknown>).sort().join(",");
+      if (serFieldNames !== cfgFieldNames) {
+        mismatches.push(`fields: [${serFieldNames}] vs [${cfgFieldNames}]`);
+      }
+    }
+
+    if (serialized.fuzzy && config.fuzzy) {
+      const serFuzzy = serialized.fuzzy as Record<string, unknown>;
+      if (serFuzzy.enabled !== undefined && serFuzzy.enabled !== config.fuzzy.enabled) {
+        mismatches.push(`fuzzy.enabled: ${serFuzzy.enabled} vs ${config.fuzzy.enabled}`);
+      }
+    }
+
+    if (mismatches.length > 0) {
+      console.warn(
+        `[LiteSearch] Import config mismatch: ${mismatches.join("; ")}. ` +
+        "The serialized index was created with different settings. " +
+        "If you use a custom idResolver, ensure the same function is passed."
+      );
+    }
+
     const engine = new LiteSearch<T>(config);
     engine.addMany(data.documents as T[]);
     return engine;

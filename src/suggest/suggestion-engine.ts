@@ -33,6 +33,7 @@ export class SuggestionEngine {
   private root: TrieNode = createNode();
   private _nodeCount = 0;
   private maxResults: number;
+  private docWords: Map<string, Map<string, number>> = new Map();
 
   constructor(maxResults = 10) {
     this.maxResults = maxResults;
@@ -56,12 +57,32 @@ export class SuggestionEngine {
     node.isWord = true;
     node.frequency++;
     node.docIds.add(docId);
+
+    if (!this.docWords.has(docId)) {
+      this.docWords.set(docId, new Map());
+    }
+    const words = this.docWords.get(docId)!;
+    words.set(word, (words.get(word) ?? 0) + 1);
   }
 
   /**
    * Remove all suggestions associated with a document.
    */
   removeDoc(docId: string): void {
+    const words = this.docWords.get(docId);
+    if (words) {
+      for (const [word, count] of words) {
+        const node = this._findNode(word);
+        if (node) {
+          node.frequency -= count;
+          if (node.frequency <= 0) {
+            node.frequency = 0;
+            node.isWord = false;
+          }
+        }
+      }
+      this.docWords.delete(docId);
+    }
     this._removeDocFromNode(this.root, docId);
   }
 
@@ -158,6 +179,16 @@ export class SuggestionEngine {
   clear(): void {
     this.root = createNode();
     this._nodeCount = 0;
+    this.docWords.clear();
+  }
+
+  private _findNode(word: string): TrieNode | null {
+    let node = this.root;
+    for (const char of word) {
+      if (!node.children.has(char)) return null;
+      node = node.children.get(char)!;
+    }
+    return node;
   }
 
   // ── Private trie helpers ──────────────────────────────────────────────────

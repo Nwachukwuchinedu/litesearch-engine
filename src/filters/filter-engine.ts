@@ -97,6 +97,10 @@ export function evaluateFilter(
 
   const group = filter as FilterGroup;
 
+  if (group.AND && group.OR) {
+    throw new Error("AND and OR are mutually exclusive — use a single logical operator per filter group");
+  }
+
   if (group.AND) {
     return group.AND.every((f) => evaluateFilter(doc, f));
   }

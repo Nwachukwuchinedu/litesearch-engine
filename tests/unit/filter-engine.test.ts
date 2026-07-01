@@ -218,6 +218,17 @@ describe("evaluateFilter", () => {
     });
   });
 
+  describe("mutually exclusive AND/OR", () => {
+    it("throws when both AND and OR are specified", () => {
+      expect(() =>
+        evaluateFilter(testDoc, {
+          AND: [{ field: "category", operator: "eq", value: "Footwear" }],
+          OR: [{ field: "price", operator: "gt", value: 5000 }],
+        })
+      ).toThrow("AND and OR are mutually exclusive");
+    });
+  });
+
   describe("edge cases", () => {
     it("handles null value gracefully", () => {
       const doc = { id: "1", name: null };

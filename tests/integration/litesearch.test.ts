@@ -23,6 +23,49 @@ function createEngine() {
 }
 
 describe("LiteSearch (integration)", () => {
+  describe("flattenValue with circular references", () => {
+    it("handles circular references without throwing", () => {
+      const engine = new LiteSearch<AnyDocument>({
+        idField: "id",
+        fields: ["title"],
+      });
+
+      // Create a value with circular reference that flattenValue will encounter
+      const circular: AnyDocument = { b: "test" };
+      circular.a = circular;
+
+      const doc: AnyDocument = { id: "1", title: circular };
+
+      expect(() => engine.add(doc)).not.toThrow();
+      const result = engine.search("test");
+      expect(result.hits.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe("import config validation", () => {
+    it("logs a warning when config does not match serialized data", () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      const engine = new LiteSearch<AnyDocument>({
+        idField: "id",
+        fields: ["title"],
+        fuzzy: { enabled: true, maxDistance: 2, minLength: 4 },
+      });
+      engine.add({ id: "1", title: "test" });
+
+      const exported = engine.export();
+
+      // Import with different fuzzy config (idField and fields match so import works)
+      LiteSearch.import(exported, {
+        idField: "id",
+        fields: ["title"],
+        fuzzy: { enabled: false, maxDistance: 1, minLength: 3 },
+      } as LiteSearchConfig<AnyDocument>);
+
+      expect(warnSpy).toHaveBeenCalled();
+      warnSpy.mockRestore();
+    });
+  });
   describe("add and search", () => {
     it("basic search returns correct docs", () => {
       const engine = createEngine();

@@ -102,6 +102,29 @@ describe("SuggestionEngine", () => {
       );
       expect(doc1Suggestions.length).toBe(0);
     });
+
+    it("decrements frequency after removeDoc", () => {
+      const engine = new SuggestionEngine(10);
+      engine.insert("hello", "doc1");
+      engine.insert("hello", "doc2");
+      expect(engine.suggest("hello").suggestions[0].frequency).toBe(2);
+
+      engine.removeDoc("doc1");
+      const suggestions = engine.suggest("hello");
+      expect(suggestions.suggestions.length).toBe(1);
+      expect(suggestions.suggestions[0].frequency).toBe(1);
+    });
+
+    it("prunes node when frequency reaches zero", () => {
+      const engine = new SuggestionEngine(10);
+      engine.insert("hello", "doc1");
+      expect(engine.suggest("hello").suggestions.length).toBe(1);
+
+      engine.removeDoc("doc1");
+      // After removing the only doc, the word should no longer appear
+      const result = engine.suggest("hello");
+      expect(result.suggestions.length).toBe(0);
+    });
   });
 
   describe("nodeCount", () => {

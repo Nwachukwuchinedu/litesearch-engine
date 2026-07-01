@@ -46,6 +46,12 @@ describe("levenshtein", () => {
     expect(levenshtein("hello", "hxxlo")).toBe(2);
     expect(levenshtein("hello", "xxxxx")).toBe(Infinity);
   });
+
+  it("supports strings longer than 65535 characters (Uint32Array)", () => {
+    const longA = "a".repeat(70000);
+    const longB = "a".repeat(70000);
+    expect(levenshtein(longA, longB, 0)).toBe(0);
+  });
 });
 
 describe("adaptiveMaxDistance", () => {

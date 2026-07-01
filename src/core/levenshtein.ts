@@ -23,8 +23,8 @@ export function levenshtein(a: string, b: string, maxDist = 2): number {
   if (lb === 0) return la <= maxDist ? la : Infinity;
 
   // Two-row DP
-  let prev = new Uint16Array(lb + 1);
-  let curr = new Uint16Array(lb + 1);
+  let prev = new Uint32Array(lb + 1);
+  let curr = new Uint32Array(lb + 1);
 
   for (let j = 0; j <= lb; j++) prev[j] = j;
 
