@@ -20,7 +20,10 @@ import type {
   SortOption,
   FacetConfig,
   FacetResult,
+  CacheConfig,
 } from "./types/index";
+
+import { LRUCache } from "./cache/lru-cache";
 
 import { buildTokenizer, type TokenizerFn } from "./core/tokenizer";
 import { BM25Scorer } from "./core/bm25";
@@ -91,6 +94,7 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
   private scorer: BM25Scorer;
   private lastUpdated: Date | null = null;
   private idResolver?: (doc: AnyDocument) => string;
+  private cache?: LRUCache<string, SearchResult<T>>;
 
   constructor(config: LiteSearchConfig<T>) {
     this.idResolver = config.idResolver;
@@ -134,6 +138,15 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
     this.docs = new DocumentStore();
     this.suggester = new SuggestionEngine(this.config.suggest.maxResults);
     this.scorer = new BM25Scorer(this.config.scoring);
+
+    // Initialize LRU query cache if enabled
+    if (config.cache?.enabled) {
+      const cc = config.cache as CacheConfig;
+      this.cache = new LRUCache<string, SearchResult<T>>(
+        cc.maxEntries ?? 1000,
+        cc.ttlMs ?? 30000
+      );
+    }
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -216,6 +229,7 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
     this.docs.add(meta);
     this.scorer.invalidateIdfCache();
     this.lastUpdated = new Date();
+    this.cache?.clear();
   }
 
   /**
@@ -329,6 +343,7 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
       this.suggester.removeDoc(id);
       this.scorer.invalidateIdfCache();
       this.lastUpdated = new Date();
+      this.cache?.clear();
     }
     return removed;
   }
@@ -349,6 +364,7 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
     this.suggester.clear();
     this.scorer.invalidateIdfCache();
     this.lastUpdated = null;
+    this.cache?.clear();
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -393,6 +409,15 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
       );
     }
 
+    // ── Cache check ──────────────────────────────────────────────────────────
+    const cacheKey = `${q}:${JSON.stringify(options)}`;
+    if (this.cache) {
+      const cached = this.cache.get(cacheKey);
+      if (cached) {
+        return { ...cached, took: Date.now() - start };
+      }
+    }
+
     const targetFields = this._resolveSearchFields(searchFields);
     const N = this.docs.size;
     const maxFuzzyDist = this.config.fuzzy.enabled
@@ -431,7 +456,7 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
       paginated, targetFields, doHighlight, docMatchedTokens, docMatchTypes
     );
 
-    return {
+    const result: SearchResult<T> = {
       hits,
       total,
       took: Date.now() - start,
@@ -439,6 +464,13 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
       pagination: { limit, offset, hasMore: offset + limit < total },
       facets: facetsResult,
     };
+
+    // ── Cache store ──────────────────────────────────────────────────────────
+    if (this.cache) {
+      this.cache.set(cacheKey, result);
+    }
+
+    return result;
   }
 
   // ───────────────────────────────────────────────────────────────────────────

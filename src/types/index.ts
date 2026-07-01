@@ -42,6 +42,18 @@ export interface LimitsConfig {
 }
 
 /**
+ * Cache configuration for the LRU query cache.
+ */
+export interface CacheConfig {
+  /** Enable query caching. Default: false */
+  enabled?: boolean;
+  /** Max number of cached results. Default: 1000 */
+  maxEntries?: number;
+  /** TTL in milliseconds. Default: 30000 (30 seconds) */
+  ttlMs?: number;
+}
+
+/**
  * LiteSearch engine configuration.
  */
 export interface LiteSearchConfig<T extends AnyDocument = AnyDocument> {
@@ -136,6 +148,12 @@ export interface LiteSearchConfig<T extends AnyDocument = AnyDocument> {
    * Input size limits for security and performance.
    */
   limits?: LimitsConfig;
+
+  /**
+   * Optional LRU query cache configuration.
+   * When enabled, identical queries within the TTL window are served from cache.
+   */
+  cache?: CacheConfig;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

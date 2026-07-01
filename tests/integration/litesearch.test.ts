@@ -407,4 +407,96 @@ describe("LiteSearch (integration)", () => {
       expect(result.hits[0].document.id).toBe("1");
     });
   });
+
+  describe("query cache", () => {
+    function createCachedEngine() {
+      return new LiteSearch<TestDoc>({
+        idField: "id",
+        fields: {
+          title: { weight: 3, suggest: true },
+          description: { weight: 1 },
+          category: { weight: 2, suggest: true },
+        },
+        fuzzy: { enabled: true, maxDistance: 2, minLength: 4 },
+        cache: { enabled: true, maxEntries: 100, ttlMs: 60000 },
+      });
+    }
+
+    it("returns same results as without cache", () => {
+      const engine = createEngine();
+      const cachedEngine = createCachedEngine();
+
+      const docs: TestDoc[] = [
+        { id: "1", title: "Running Shoes", description: "Comfortable running shoes", category: "Footwear", price: 7500 },
+        { id: "2", title: "Basketball Sneakers", description: "High-top shoes", category: "Footwear", price: 12000 },
+      ];
+      engine.addMany(docs);
+      cachedEngine.addMany(docs);
+
+      const result = engine.search("shoes");
+      const cachedResult = cachedEngine.search("shoes");
+
+      expect(cachedResult.hits.length).toBe(result.hits.length);
+      expect(cachedResult.hits[0].document.id).toBe(result.hits[0].document.id);
+      expect(cachedResult.query).toBe(result.query);
+    });
+
+    it("identical queries return cached result quickly", () => {
+      const engine = createCachedEngine();
+      engine.add({ id: "1", title: "Running Shoes", description: "test", category: "Footwear", price: 7500 });
+
+      // First call populates cache
+      const first = engine.search("shoes");
+      expect(first.hits.length).toBe(1);
+
+      // Second call should be faster (from cache)
+      const second = engine.search("shoes");
+      expect(second.hits.length).toBe(1);
+      expect(second.hits[0].document.id).toBe("1");
+      // took should be very small for cached result
+      expect(second.took).toBeLessThan(10);
+    });
+
+    it("cache is invalidated on add() and new doc shows up", () => {
+      const engine = createCachedEngine();
+      engine.add({ id: "1", title: "Running Shoes", description: "test", category: "Footwear", price: 7500 });
+
+      // Cache the result for "shoes"
+      const first = engine.search("shoes");
+      expect(first.hits.length).toBe(1);
+
+      // Add a new matching document
+      engine.add({ id: "2", title: "Basketball Sneakers", description: "High-top shoes", category: "Footwear", price: 12000 });
+
+      // Cache should be invalidated; new doc should appear
+      const second = engine.search("shoes");
+      expect(second.hits.length).toBe(2);
+    });
+
+    it("cache is invalidated on remove()", () => {
+      const engine = createCachedEngine();
+      engine.add({ id: "1", title: "Running Shoes", description: "Comfortable shoes", category: "Footwear", price: 7500 });
+      engine.add({ id: "2", title: "Basketball Sneakers", description: "High-top shoes", category: "Footwear", price: 12000 });
+
+      // Cache the result for "shoes"
+      const first = engine.search("shoes");
+      expect(first.hits.length).toBe(2);
+
+      // Remove one document
+      engine.remove("1");
+
+      // Cache should be invalidated; should still find 1 result
+      const second = engine.search("shoes");
+      expect(second.hits.length).toBe(1);
+      expect(second.hits[0].document.id).toBe("2");
+    });
+
+    it("cache not enabled by default", () => {
+      const engine = createEngine(); // cache not enabled
+      // Ensure this doesn't throw
+      engine.add({ id: "1", title: "Running Shoes", description: "test", category: "Footwear", price: 7500 });
+      const result = engine.search("shoes");
+      expect(result.hits.length).toBe(1);
+    });
+  });
 });
