@@ -208,31 +208,38 @@ export class InvertedIndexStore {
     const fieldIndex = this.indexes.get(field);
     if (!fieldIndex) return false;
 
-    const firstPostings = fieldIndex.get(terms[0]);
-    if (!firstPostings) return false;
-    const firstPositions = firstPostings.get(docId);
-    if (!firstPositions || firstPositions.length === 0) return false;
-
-    // Build position sets for all subsequent terms
-    const termPosSets: Set<number>[] = [];
-    for (let i = 1; i < terms.length; i++) {
-      const postings = fieldIndex.get(terms[i]);
+    // Get positions for each term
+    const allPositions: number[][] = [];
+    for (const term of terms) {
+      const postings = fieldIndex.get(term);
       if (!postings) return false;
       const positions = postings.get(docId);
       if (!positions || positions.length === 0) return false;
-      termPosSets.push(new Set(positions));
+      allPositions.push(positions);
     }
 
-    // Check if any first-term position has a consecutive run through all terms
-    for (const startPos of firstPositions) {
-      let allMatch = true;
-      for (let i = 0; i < termPosSets.length; i++) {
-        if (!termPosSets[i].has(startPos + i + 1)) {
-          allMatch = false;
+    // Pointer-based consecutive check
+    // Positions are sorted ascending within each array
+    const ptrs = new Array(terms.length).fill(0);
+
+    while (ptrs[0] < allPositions[0].length) {
+      const start = allPositions[0][ptrs[0]];
+      let match = true;
+
+      for (let i = 1; i < terms.length; i++) {
+        // Advance pointer i until we reach or pass start + i
+        while (ptrs[i] < allPositions[i].length && allPositions[i][ptrs[i]] < start + i) {
+          ptrs[i]++;
+        }
+        // If we've passed it or run out, not a match
+        if (ptrs[i] >= allPositions[i].length || allPositions[i][ptrs[i]] !== start + i) {
+          match = false;
           break;
         }
       }
-      if (allMatch) return true;
+
+      if (match) return true;
+      ptrs[0]++; // try next position of first term
     }
 
     return false;

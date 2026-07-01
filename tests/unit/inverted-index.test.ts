@@ -146,6 +146,50 @@ describe("InvertedIndexStore", () => {
       store.addPosting("title", "quick", "doc1", 0);
       expect(store.hasExactPhrase("title", ["quick", "nonexistent"], "doc1")).toBe(false);
     });
+
+    it("returns true for longer phrase (4+ terms)", () => {
+      const store = createStore();
+      store.addPosting("title", "a", "doc1", 0);
+      store.addPosting("title", "b", "doc1", 1);
+      store.addPosting("title", "c", "doc1", 2);
+      store.addPosting("title", "d", "doc1", 3);
+      store.addPosting("title", "e", "doc1", 4);
+      expect(store.hasExactPhrase("title", ["a", "b", "c", "d", "e"], "doc1")).toBe(true);
+    });
+
+    it("returns true when first term has many positions but only one match", () => {
+      const store = createStore();
+      // Term "the" appears at many positions, but only position 10 leads to a consecutive match
+      for (let i = 0; i < 50; i++) {
+        store.addPosting("title", "the", "doc1", i);
+      }
+      store.addPosting("title", "quick", "doc1", 10);
+      store.addPosting("title", "brown", "doc1", 11);
+      store.addPosting("title", "fox", "doc1", 12);
+      // "the" at position 10 is the only match — positions 10, 11, 12 are "the quick brown fox"
+      expect(store.hasExactPhrase("title", ["the", "quick", "brown", "fox"], "doc1")).toBe(true);
+    });
+
+    it("returns false when first term has many positions but none match consecutively", () => {
+      const store = createStore();
+      for (let i = 0; i < 50; i++) {
+        store.addPosting("title", "the", "doc1", i);
+      }
+      // "quick" is at position 100, far from any "the"
+      store.addPosting("title", "quick", "doc1", 100);
+      expect(store.hasExactPhrase("title", ["the", "quick"], "doc1")).toBe(false);
+    });
+
+    it("handles high-frequency term with thousands of positions", () => {
+      const store = createStore();
+      // Add 2000 positions for term "a", but only positions 1000-1002 form a consecutive match
+      for (let i = 0; i < 2000; i++) {
+        store.addPosting("title", "a", "doc1", i);
+      }
+      store.addPosting("title", "b", "doc1", 1001);
+      store.addPosting("title", "c", "doc1", 1002);
+      expect(store.hasExactPhrase("title", ["a", "b", "c"], "doc1")).toBe(true);
+    });
   });
 
   describe("termCount", () => {
