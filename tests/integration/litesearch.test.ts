@@ -123,6 +123,82 @@ describe("LiteSearch (integration)", () => {
       expect(result.hits[0].document.id).toBe("1");
     });
 
+    it("filter with range returns correct results using index", () => {
+      const engine = new LiteSearch<AnyDocument>({
+        idField: "id",
+        fields: ["title", "price"],
+        fuzzy: { enabled: false },
+      });
+      engine.add({ id: "1", title: "Shoes A", price: 7500 });
+      engine.add({ id: "2", title: "Shoes B", price: 12000 });
+      engine.add({ id: "3", title: "Yoga Mat", price: 2500 });
+
+      const result = engine.search("Shoes", {
+        filter: { field: "price", operator: "gte", value: 5000 },
+      });
+      expect(result.hits.length).toBe(2);
+      expect(result.hits.some((h) => h.document.id === "1")).toBe(true);
+      expect(result.hits.some((h) => h.document.id === "2")).toBe(true);
+    });
+
+    it("filter with contains falls back to scan", () => {
+      const engine = createEngine();
+      engine.add({ id: "1", title: "Running Shoes", description: "Comfortable", category: "Footwear", price: 7500 });
+      engine.add({ id: "2", title: "T-Shirt", description: "Cotton fabric", category: "Clothing", price: 1500 });
+
+      const result = engine.search("shoes", {
+        filter: { field: "title", operator: "contains", value: "Running" },
+      });
+      expect(result.hits.length).toBe(1);
+      expect(result.hits[0].document.id).toBe("1");
+    });
+
+    it("mixed filter with supported and unsupported operators falls back to scan", () => {
+      const engine = createEngine();
+      engine.add({ id: "1", title: "Running Shoes", description: "Comfortable", category: "Footwear", price: 7500 });
+      engine.add({ id: "2", title: "T-Shirt", description: "Cotton fabric", category: "Clothing", price: 1500 });
+
+      const result = engine.search("shoes", {
+        filter: {
+          AND: [
+            { field: "category", operator: "eq", value: "Footwear" },
+            { field: "title", operator: "contains", value: "Running" },
+          ],
+        },
+      });
+      expect(result.hits.length).toBe(1);
+      expect(result.hits[0].document.id).toBe("1");
+    });
+
+    it("filter with in operator works via index", () => {
+      const engine = createEngine();
+      engine.add({ id: "1", title: "Running Shoes", description: "test", category: "Footwear", price: 7500 });
+      engine.add({ id: "2", title: "T-Shirt", description: "test", category: "Clothing", price: 1500 });
+      engine.add({ id: "3", title: "Jeans", description: "test", category: "Clothing", price: 3000 });
+
+      const result = engine.search("shoes", {
+        filter: { field: "category", operator: "in", value: ["Footwear", "Clothing"] },
+      });
+      expect(result.hits.length).toBe(1);
+      expect(result.hits[0].document.id).toBe("1");
+    });
+
+    it("filter with gt returns correct results using index", () => {
+      const engine = new LiteSearch<AnyDocument>({
+        idField: "id",
+        fields: ["title", "price"],
+        fuzzy: { enabled: false },
+      });
+      engine.add({ id: "1", title: "Shoes A", price: 7500 });
+      engine.add({ id: "2", title: "Shoes B", price: 5000 });
+
+      const result = engine.search("Shoes", {
+        filter: { field: "price", operator: "gt", value: 5000 },
+      });
+      expect(result.hits.length).toBe(1);
+      expect(result.hits[0].document.id).toBe("1");
+    });
+
     it("pagination with limit and offset works", () => {
       const engine = createEngine();
       for (let i = 1; i <= 20; i++) {

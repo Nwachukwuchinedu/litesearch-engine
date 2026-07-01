@@ -29,6 +29,7 @@ import { buildTokenizer, type TokenizerFn } from "./core/tokenizer";
 import { BM25Scorer } from "./core/bm25";
 import { InvertedIndexStore } from "./indexing/inverted-index";
 import { DocumentStore } from "./indexing/document-store";
+import { FilterIndex } from "./indexing/filter-index";
 import { SuggestionEngine } from "./suggest/suggestion-engine";
 import { evaluateFilter } from "./filters/filter-engine";
 import { highlight } from "./search/highlighter";
@@ -82,6 +83,16 @@ function getFieldValue(doc: AnyDocument, field: string, path?: string): string {
   return flattenValue(val);
 }
 
+function getRawFieldValue(doc: AnyDocument, key: string): unknown {
+  const parts = key.split(".");
+  let val: unknown = doc;
+  for (const p of parts) {
+    if (val === null || val === undefined) return undefined;
+    val = (val as Record<string, unknown>)[p];
+  }
+  return val;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 export class LiteSearch<T extends AnyDocument = AnyDocument> {
@@ -90,6 +101,7 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
   private tokenize: TokenizerFn;
   private index: InvertedIndexStore;
   private docs: DocumentStore;
+  private filterIndex: FilterIndex;
   private suggester: SuggestionEngine;
   private scorer: BM25Scorer;
   private lastUpdated: Date | null = null;
@@ -136,6 +148,7 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
     this.tokenize = buildTokenizer(this.config.tokenizer);
     this.index = new InvertedIndexStore();
     this.docs = new DocumentStore();
+    this.filterIndex = new FilterIndex();
     this.suggester = new SuggestionEngine(this.config.suggest.maxResults);
     this.scorer = new BM25Scorer(this.config.scoring);
 
@@ -223,6 +236,12 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
           }
         }
       }
+
+      // Index the raw field value for filter lookups
+      const rawFieldValue = fieldCfg.extract
+        ? fieldCfg.extract(doc)
+        : getRawFieldValue(doc, fieldCfg.path ?? field);
+      this.filterIndex.add(id, field, rawFieldValue);
     }
 
     const meta: DocMeta = { id, fieldLengths, doc };
@@ -255,6 +274,7 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
       if (this.docs.has(id)) {
         this.docs.remove(id);
         this.index.removeDoc(id);
+        this.filterIndex.removeDoc(id);
         this.suggester.removeDoc(id);
       }
       docs.push({ id, doc });
@@ -306,6 +326,11 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
             }
           }
         }
+
+        const rawFieldValue = fieldCfg.extract
+          ? fieldCfg.extract(doc)
+          : getRawFieldValue(doc, fieldCfg.path ?? field);
+        this.filterIndex.add(id, field, rawFieldValue);
       }
 
       allMetas.push({ id, fieldLengths, doc });
@@ -341,6 +366,7 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
     const removed = this.docs.remove(id);
     if (removed) {
       this.index.removeDoc(id);
+      this.filterIndex.removeDoc(id);
       this.suggester.removeDoc(id);
       this.scorer.invalidateIdfCache();
       this.lastUpdated = new Date();
@@ -362,6 +388,7 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
   clear(): void {
     this.index.clear();
     this.docs.clear();
+    this.filterIndex.clear();
     this.suggester.clear();
     this.scorer.invalidateIdfCache();
     this.lastUpdated = null;
@@ -658,6 +685,12 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
     filter: FilterClause | FilterGroup | undefined
   ): Set<string> | undefined {
     if (!filter) return undefined;
+
+    // Try to evaluate using filter index
+    const indexed = this._evaluateFilterWithIndex(filter);
+    if (indexed !== null) return indexed;
+
+    // Fall back to full document scan
     const ids = new Set<string>();
     for (const meta of this.docs.getAll()) {
       if (evaluateFilter(meta.doc, filter)) {
@@ -665,6 +698,124 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
       }
     }
     return ids;
+  }
+
+  private _isFilterGroup(f: FilterClause | FilterGroup): f is FilterGroup {
+    return "AND" in f || "OR" in f || "NOT" in f;
+  }
+
+  private _evaluateFilterWithIndex(
+    filter: FilterClause | FilterGroup
+  ): Set<string> | null {
+    if (typeof filter !== "object" || filter === null) return null;
+    if (Object.keys(filter).length === 0) return null;
+
+    if (!this._isFilterGroup(filter)) {
+      return this._evaluateClauseWithIndex(filter as FilterClause);
+    }
+
+    const group = filter as FilterGroup;
+
+    if (group.AND && group.OR) {
+      throw new Error("AND and OR are mutually exclusive — use a single logical operator per filter group");
+    }
+
+    if (group.AND) {
+      let result: Set<string> | null = null;
+      for (const f of group.AND) {
+        const sub = this._evaluateFilterWithIndex(f);
+        if (sub === null) return null;
+        if (result === null) {
+          result = new Set(sub);
+        } else {
+          result = new Set([...result].filter(id => sub.has(id)));
+        }
+      }
+      return result ?? new Set();
+    }
+
+    if (group.OR) {
+      let result: Set<string> | null = null;
+      for (const f of group.OR) {
+        const sub = this._evaluateFilterWithIndex(f);
+        if (sub === null) return null;
+        if (result === null) {
+          result = new Set(sub);
+        } else {
+          for (const id of sub) result.add(id);
+        }
+      }
+      return result ?? new Set();
+    }
+
+    if (group.NOT) {
+      const sub = this._evaluateFilterWithIndex(group.NOT);
+      if (sub === null) return null;
+      const all = this.filterIndex.getAllDocIds();
+      return new Set([...all].filter(id => !sub.has(id)));
+    }
+
+    return null;
+  }
+
+  private _evaluateClauseWithIndex(clause: FilterClause): Set<string> | null {
+    const { field, operator, value } = clause;
+
+    // Only use filter index for configured fields; fall back to scan otherwise
+    if (!(field in this.fields)) return null;
+
+    switch (operator as FilterOperator) {
+      case "eq":
+        return this.filterIndex.getEq(field, value) ?? new Set();
+
+      case "in": {
+        if (!Array.isArray(value) || value.length === 0) return new Set();
+        const result = new Set<string>();
+        for (const v of value) {
+          const matchSet = this.filterIndex.getEq(field, v);
+          if (matchSet) {
+            for (const id of matchSet) result.add(id);
+          }
+        }
+        return result;
+      }
+
+      case "gt": {
+        const v = Number(value);
+        if (isNaN(v)) return null;
+        return this.filterIndex.getRange(field, v, undefined, false, true);
+      }
+
+      case "gte": {
+        const v = Number(value);
+        if (isNaN(v)) return null;
+        return this.filterIndex.getRange(field, v, undefined, true, true);
+      }
+
+      case "lt": {
+        const v = Number(value);
+        if (isNaN(v)) return null;
+        return this.filterIndex.getRange(field, undefined, v, true, false);
+      }
+
+      case "lte": {
+        const v = Number(value);
+        if (isNaN(v)) return null;
+        return this.filterIndex.getRange(field, undefined, v, true, true);
+      }
+
+      case "range": {
+        if (!Array.isArray(value) || value.length !== 2) return null;
+        const [min, max] = value as [number, number];
+        return this.filterIndex.getRange(field, min, max, true, true);
+      }
+
+      case "exists":
+        return this.filterIndex.getExists(field);
+
+      default:
+        return null;
+    }
   }
 
   private _lookupAndScore(
