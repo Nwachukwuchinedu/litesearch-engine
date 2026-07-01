@@ -291,4 +291,47 @@ describe("LiteSearch (integration)", () => {
       expect(result.hits.length).toBe(2);
     });
   });
+
+  describe("input size limits", () => {
+    it("throws when query exceeds maxQueryLength", () => {
+      const engine = createEngine();
+      const longQuery = "a".repeat(600);
+      expect(() => engine.search(longQuery)).toThrow(/exceeds max length/);
+    });
+
+    it("throws when query produces too many tokens", () => {
+      const engine = new LiteSearch<AnyDocument>({
+        idField: "id",
+        fields: ["title"],
+        limits: { maxTokenCount: 3 },
+      });
+      engine.add({ id: "1", title: "apple banana cherry date" });
+      // "apple banana cherry date" tokenizes to 4 tokens, exceeds limit of 3
+      expect(() => engine.search("apple banana cherry date")).toThrow(/exceeding max/);
+    });
+
+    it("throws when document exceeds maxDocumentSize", () => {
+      const engine = new LiteSearch<AnyDocument>({
+        idField: "id",
+        fields: ["title"],
+        limits: { maxDocumentSize: 50 },
+      });
+      const largeDoc = { id: "1", title: "x".repeat(100) };
+      // JSON.stringify is > 50 bytes
+      expect(() => engine.add(largeDoc)).toThrow(/exceeds max/);
+    });
+
+    it("truncates field values exceeding maxFieldValueSize", () => {
+      const engine = new LiteSearch<AnyDocument>({
+        idField: "id",
+        fields: ["title"],
+        limits: { maxFieldValueSize: 10 },
+      });
+      engine.add({ id: "1", title: "hello world this is a test" });
+      // Title truncated to 10 chars: "hello worl" → tokens ["hello", "worl"]
+      const result = engine.search("hello");
+      expect(result.hits.length).toBe(1);
+      expect(result.hits[0].document.id).toBe("1");
+    });
+  });
 });

@@ -52,4 +52,28 @@ describe("highlight", () => {
     expect(result.snippet).toContain("<mark>$10.99</mark>");
     expect(result.matchedTokens).toContain("$10.99");
   });
+
+  it("handles tokens that are substrings of each other (longest-first matching)", () => {
+    const result = highlight("I love category and cats", ["cat", "category"], "title");
+    expect(result.snippet).toContain("<mark>category</mark>");
+    expect(result.snippet).toContain("<mark>cat</mark>");
+    expect(result.snippet).not.toContain("<mark>cat</mark>egory");
+  });
+
+  it("handles multiple tokens with regex special characters", () => {
+    const result = highlight(
+      "price is $10.99 (on sale) plus tax?",
+      ["$10.99", "(on sale)", "tax?"],
+      "title"
+    );
+    expect(result.snippet).toContain("<mark>$10.99</mark>");
+    expect(result.snippet).toContain("<mark>(on sale)</mark>");
+    expect(result.snippet).toContain("<mark>tax?</mark>");
+  });
+
+  it("empty matchedTokens returns snippet unchanged", () => {
+    const result = highlight("some text here", [], "title");
+    expect(result.snippet).toBe("some text here");
+    expect(result.matchedTokens).toEqual([]);
+  });
 });

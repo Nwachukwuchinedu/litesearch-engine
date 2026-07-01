@@ -119,6 +119,13 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
         language: "en",
         ...config.tokenizer,
       },
+      limits: {
+        maxQueryLength: 512,
+        maxTokenCount: 128,
+        maxDocumentSize: 1000000,
+        maxFieldValueSize: 10000,
+        ...config.limits,
+      },
     };
 
     this.fields = resolveFields(config.fields);
@@ -158,12 +165,25 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
       this.remove(id);
     }
 
+    // Enforce max document size (skip check if JSON.stringify fails, e.g. circular refs)
+    let docStr = "";
+    try { docStr = JSON.stringify(doc); } catch { /* skip size check */ }
+    if (docStr.length > this.config.limits.maxDocumentSize!) {
+      throw new Error(
+        `Document size (${docStr.length} bytes) exceeds max of ${this.config.limits.maxDocumentSize!} bytes`
+      );
+    }
+
     const fieldLengths: Record<string, number> = {};
 
     for (const [field, fieldCfg] of Object.entries(this.fields)) {
-      const rawValue = fieldCfg.extract
+      let rawValue = fieldCfg.extract
         ? fieldCfg.extract(doc)
         : getFieldValue(doc, field, fieldCfg.path);
+
+      if (rawValue.length > this.config.limits.maxFieldValueSize!) {
+        rawValue = rawValue.slice(0, this.config.limits.maxFieldValueSize!);
+      }
 
       if (!rawValue) {
         if (_emptyCounts) {
@@ -275,8 +295,20 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
     const q = query.trim();
     if (!q) return this._emptyResult(q, limit, offset, start);
 
+    if (q.length > this.config.limits.maxQueryLength!) {
+      throw new Error(
+        `Query exceeds max length of ${this.config.limits.maxQueryLength!} characters (got ${q.length})`
+      );
+    }
+
     const queryTokens = this.tokenize(q);
     if (queryTokens.length === 0) return this._emptyResult(q, limit, offset, start);
+
+    if (queryTokens.length > this.config.limits.maxTokenCount!) {
+      throw new Error(
+        `Query produced ${queryTokens.length} tokens, exceeding max of ${this.config.limits.maxTokenCount!}`
+      );
+    }
 
     const targetFields = this._resolveSearchFields(searchFields);
     const N = this.docs.size;

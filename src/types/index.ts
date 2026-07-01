@@ -30,6 +30,17 @@ export interface FieldConfig {
   extract?: (doc: AnyDocument) => string;
 }
 
+export interface LimitsConfig {
+  /** Max characters in a query string. Default: 512 */
+  maxQueryLength?: number;
+  /** Max tokens after tokenization. Default: 128 */
+  maxTokenCount?: number;
+  /** Max JSON bytes per document. Default: 1,000,000 (1MB) */
+  maxDocumentSize?: number;
+  /** Max characters per field value (truncated if exceeded). Default: 10,000 */
+  maxFieldValueSize?: number;
+}
+
 /**
  * LiteSearch engine configuration.
  */
@@ -120,6 +131,11 @@ export interface LiteSearchConfig<T extends AnyDocument = AnyDocument> {
      */
     normalizer?: (token: string) => string;
   };
+
+  /**
+   * Input size limits for security and performance.
+   */
+  limits?: LimitsConfig;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

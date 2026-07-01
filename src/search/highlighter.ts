@@ -52,14 +52,11 @@ export function highlight(
   if (start > 0) snippet = "…" + snippet;
   if (end < fieldValue.length) snippet = snippet + "…";
 
-  // Highlight all matched tokens in the snippet
-  let highlighted = snippet;
-  const sorted = [...found].sort((a, b) => b.length - a.length); // longest first to avoid partial replacements
-
-  for (const token of sorted) {
-    const re = new RegExp(escapeRegex(token), "gi");
-    highlighted = highlighted.replace(re, (match) => `<mark>${match}</mark>`);
-  }
+  // Highlight all matched tokens in the snippet using a single combined regex
+  const combined = found.length > 0
+    ? new RegExp(`(${[...found].sort((a, b) => b.length - a.length).map(escapeRegex).join("|")})`, "gi")
+    : null;
+  const highlighted = combined ? snippet.replace(combined, (match) => `<mark>${match}</mark>`) : snippet;
 
   return {
     field,
