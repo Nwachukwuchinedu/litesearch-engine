@@ -322,6 +322,7 @@ export class LiteSearch<T extends AnyDocument = AnyDocument> {
     // Phase 5: Single IDF cache invalidation
     this.scorer.invalidateIdfCache();
     this.lastUpdated = new Date();
+    this.cache?.clear();
 
     // Phase 6: Empty field warnings
     for (const [field, count] of emptyCounts) {
