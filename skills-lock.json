@@ -7,6 +7,12 @@
       "skillPath": "skills/engineering/improve-codebase-architecture/SKILL.md",
       "computedHash": "4c4d2b6da48482c1a054aca0e09eafd61cdcbebe2bda10abd3f355bf5f6fc57c"
     },
+    "review": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/in-progress/review/SKILL.md",
+      "computedHash": "270e0e7151ccd0b9623163396e1137a7fe013e0e1a07fd02ca03ead4efdcc21c"
+    },
     "subagent-driven-development": {
       "source": "obra/superpowers",
       "sourceType": "github",
